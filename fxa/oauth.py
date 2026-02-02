@@ -238,11 +238,15 @@ class Client:
             'profile_changed_at': decoded.get('fxa-profileChangedAt')
         }
 
-    def verify_token(self, token, scope=None):
+    def verify_token(self, token, scope=None, include_verification_source=False):
         """Verify an OAuth token, and retrieve user id and scopes.
 
         :param token: the string to verify.
         :param scope: optional scope expected to be provided for this token.
+        :param include_verification_source: if True, the returned dict includes
+            a ``verification_source`` key: ``"local"`` (JWT decoded with local
+            keys), ``"remote"`` (verified via server POST /verify), or
+            ``"cached"`` (response was served from cache).
         :returns: a dict with user id and authorized scopes for this token.
         :raises fxa.errors.ClientError: if the provided token is invalid.
         :raises fxa.errors.TrustError: if the token scopes do not match.
@@ -254,6 +258,7 @@ class Client:
         else:
             resp = None
 
+        verification_source = None
         if resp is None:
             # We want to fetch
             # https://oauth.accounts.firefox.com/.well-known/openid-configuration
@@ -272,6 +277,7 @@ class Client:
                 for k in keys:
                     try:
                         resp = self._verify_jwt_token(json.dumps(k), token)
+                        verification_source = 'local'
                         break
                     except jwt.exceptions.InvalidSignatureError:
                         # It's only worth trying other keys in the event of
@@ -294,6 +300,7 @@ class Client:
                 raise TrustError({"error": str(e)})
             if resp is None:
                 resp = self.apiclient.post('/verify', {'token': token})
+                verification_source = 'remote'
             missing_attrs = ", ".join([
                 k for k in ('user', 'scope', 'client_id')
                 if resp.get(k) is None
@@ -311,7 +318,10 @@ class Client:
                 self.cache.set(key, json.dumps(resp))
         else:
             resp = json.loads(resp)
+            verification_source = 'cached'
 
+        if include_verification_source and verification_source is not None:
+            resp = dict(resp, verification_source=verification_source)
         return resp
 
     def destroy_token(self, token):
