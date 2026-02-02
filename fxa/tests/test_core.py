@@ -1,7 +1,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-import time
+import os
 
 from urllib.parse import urlparse
 
@@ -24,6 +24,12 @@ from fxa.tests.utils import (
 # It's nice to have such an option, but we shouldn't hit the network
 # for every test run.  Instead let's build a mock server and use that.
 TEST_SERVER_URL = "https://api-accounts.stage.mozaws.net/v1/"
+
+if os.environ.get("PYFXA_LIVE_TESTS") != "1":
+    pytest.skip(
+        "Live server tests disabled; set PYFXA_LIVE_TESTS=1 to enable.",
+        allow_module_level=True,
+    )
 
 
 @parameterized_class([
