@@ -7,10 +7,12 @@ from urllib.parse import urlparse
 
 import pyotp
 import pytest
+import requests
 from parameterized import parameterized_class
 
 import fxa.errors
 from fxa.core import Client, StretchedPassword
+from fxa._utils import APIClient
 
 from fxa.tests.utils import (
     unittest,
@@ -32,15 +34,20 @@ if os.environ.get("PYFXA_LIVE_TESTS") != "1":
     )
 
 
-@parameterized_class([
-   {"key_stretch_version": 1},
-   {"key_stretch_version": 2},
-])
+@parameterized_class(
+    [
+        {"key_stretch_version": 1},
+        {"key_stretch_version": 2},
+    ]
+)
 class TestCoreClient(unittest.TestCase):
-
     server_url = TEST_SERVER_URL
 
     def setUp(self):
+        if not os.environ.get("FXA_RUN_LIVE_TESTS"):
+            self.skipTest(
+                "Set FXA_RUN_LIVE_TESTS=1 to run live tests against the stage server"
+            )
         self.client_v1 = Client(self.server_url)
         self.client_v2 = Client(self.server_url, key_stretch_version=2)
         if self.key_stretch_version == 2:
@@ -173,9 +180,7 @@ class TestCoreClient(unittest.TestCase):
         # Now verify with the actual code, and reset the account.
         artok = pftok.verify_code(code)
         self.client.reset_account(
-            email=acct.email,
-            token=artok,
-            password=DUMMY_PASSWORD
+            email=acct.email, token=artok, password=DUMMY_PASSWORD
         )
 
     def test_email_code_verification(self):
@@ -183,8 +188,7 @@ class TestCoreClient(unittest.TestCase):
         # Create a fresh testing account.
         self.acct = TestEmailAccount()
         session = self.client.create_account(
-            email=self.acct.email,
-            password=DUMMY_PASSWORD
+            email=self.acct.email, password=DUMMY_PASSWORD
         )
         self.add_account_to_delete(self.acct, session)
 
@@ -195,17 +199,15 @@ class TestCoreClient(unittest.TestCase):
         if not m:
             raise RuntimeError("Verification email was not received")
         # If everything went well, verify_email_code should return an empty json object
-        response = self.client.verify_email_code(m["headers"]["x-uid"],
-                                                 m["headers"]["x-verify-code"])
+        response = self.client.verify_email_code(
+            m["headers"]["x-uid"], m["headers"]["x-verify-code"]
+        )
         self.assertEqual(response, {})
 
     @pytest.mark.skip(reason="Endpoint no longer supported.")
     def test_send_unblock_code(self):
         acct = TestEmailAccount(email="block-{uniq}@{hostname}")
-        session = self.client.create_account(
-            email=acct.email,
-            password=DUMMY_PASSWORD
-        )
+        session = self.client.create_account(email=acct.email, password=DUMMY_PASSWORD)
         self.add_account_to_delete(acct, session)
 
         # Initiate sending unblock code
@@ -219,11 +221,7 @@ class TestCoreClient(unittest.TestCase):
         code = m["headers"]["x-unblock-code"]
         self.assertTrue(len(code) > 0)
 
-        self.client.login(
-            email=acct.email,
-            password=DUMMY_PASSWORD,
-            unblock_code=code
-        )
+        self.client.login(email=acct.email, password=DUMMY_PASSWORD, unblock_code=code)
 
     def test_key_stretch_upgrade(self):
         # Only applicable for V2 key stretch
@@ -233,9 +231,7 @@ class TestCoreClient(unittest.TestCase):
         # Create account using key stretch v1 mode
         acct = TestEmailAccount()
         session1 = self.client_v1.create_account(
-            email=acct.email,
-            password=DUMMY_PASSWORD,
-            keys=True
+            email=acct.email, password=DUMMY_PASSWORD, keys=True
         )
         self.add_account_to_delete(acct, session1)
         verify_account(acct, self.client_v1)
@@ -243,7 +239,9 @@ class TestCoreClient(unittest.TestCase):
         keys1 = session1.fetch_keys()
 
         # Login with using key stretch v2 mode
-        session2 = self.client_v2.login(email=acct.email, password=DUMMY_PASSWORD, keys=True)
+        session2 = self.client_v2.login(
+            email=acct.email, password=DUMMY_PASSWORD, keys=True
+        )
         version2, _ = self.client_v2.get_key_stretch_version(acct.email)
         keys2 = session2.fetch_keys()
 
@@ -260,9 +258,7 @@ class TestCoreClient(unittest.TestCase):
         # Create account with V2 key stretching enabled
         acct = TestEmailAccount()
         session = self.client_v2.create_account(
-            email=acct.email,
-            password=DUMMY_PASSWORD,
-            keys=True
+            email=acct.email, password=DUMMY_PASSWORD, keys=True
         )
         self.add_account_to_delete(acct, session)
         verify_account(acct, self.client_v2)
@@ -270,7 +266,9 @@ class TestCoreClient(unittest.TestCase):
         keys_1 = session.fetch_keys()
 
         # Login with key stretch v1 enabled and get keys
-        session = self.client_v1.login(email=acct.email, password=DUMMY_PASSWORD, keys=True)
+        session = self.client_v1.login(
+            email=acct.email, password=DUMMY_PASSWORD, keys=True
+        )
         version_2, _ = self.client_v2.get_key_stretch_version(acct.email)
         keys_2 = session.fetch_keys()
 
@@ -279,16 +277,20 @@ class TestCoreClient(unittest.TestCase):
         self.assertEqual(keys_1, keys_2)
 
 
-@parameterized_class([
-   {"key_stretch_version": 1},
-   {"key_stretch_version": 2},
-])
+@parameterized_class(
+    [
+        {"key_stretch_version": 1},
+        {"key_stretch_version": 2},
+    ]
+)
 class TestCoreClientSession(unittest.TestCase):
-
     server_url = TEST_SERVER_URL
 
     def setUp(self):
-
+        if not os.environ.get("FXA_RUN_LIVE_TESTS"):
+            self.skipTest(
+                "Set FXA_RUN_LIVE_TESTS=1 to run live tests against the stage server"
+            )
         self.client_v2 = Client(self.server_url, key_stretch_version=2)
         self.client_v1 = Client(self.server_url, key_stretch_version=1)
         if self.key_stretch_version == 2:
@@ -357,8 +359,10 @@ class TestCoreClientSession(unittest.TestCase):
         # Check that we can use the new password.
         session2 = self.client.login(self.acct.email, newpwd, keys=True)
         if not session2.get_email_status().get("verified"):
+
             def has_verify_code(m):
                 return "x-verify-code" in m["headers"]
+
             m = self.acct.wait_for_email(has_verify_code)
             if not m:
                 raise RuntimeError("Verification email was not received")
@@ -401,6 +405,29 @@ class TestCoreClientSession(unittest.TestCase):
         self.assertFalse(self.session.totp_exists())
 
 
+class TestAPIClientWAFHeader(unittest.TestCase):
+    """Unit tests for CI_WAF_TOKEN header injection in APIClient."""
+
+    SERVER_URL = "https://api.example.com/v1/"
+
+    def test_waf_header_set_when_env_var_present(self):
+        with unittest.mock.patch.dict("os.environ", {"CI_WAF_TOKEN": "sekrit"}):
+            client = APIClient(self.SERVER_URL)
+        self.assertEqual(client.headers.get("fxa-ci"), "sekrit")
+
+    def test_waf_header_absent_when_env_var_not_set(self):
+        env = {k: v for k, v in os.environ.items() if k != "CI_WAF_TOKEN"}
+        with unittest.mock.patch.dict("os.environ", env, clear=True):
+            client = APIClient(self.SERVER_URL)
+        self.assertNotIn("fxa-ci", client.headers)
+
+    def test_waf_header_set_on_caller_supplied_session(self):
+        supplied = requests.Session()
+        with unittest.mock.patch.dict("os.environ", {"CI_WAF_TOKEN": "sekrit"}):
+            APIClient(self.SERVER_URL, session=supplied)
+        self.assertEqual(supplied.headers.get("fxa-ci"), "sekrit")
+
+
 # helpers
 def verify_account(acct, client):
     def wait_for_email(m):
@@ -410,6 +437,7 @@ def verify_account(acct, client):
     if not m:
         raise RuntimeError("Verification email was not received")
     # If everything went well, verify_email_code should return an empty json object
-    response = client.verify_email_code(m["headers"]["x-uid"],
-                                        m["headers"]["x-verify-code"])
+    response = client.verify_email_code(
+        m["headers"]["x-uid"], m["headers"]["x-verify-code"]
+    )
     return response
