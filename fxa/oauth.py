@@ -9,6 +9,7 @@ import hashlib
 from urllib.parse import urlparse, urlunparse, urlencode, parse_qs
 
 import jwt
+import jwtoxide
 from jwtoxide import DecodingKey, Jwk, ValidationOptions, decode
 from fxa.cache import MemoryCache, DEFAULT_CACHE_EXPIRY
 from fxa.constants import PRODUCTION_URLS
@@ -216,6 +217,10 @@ class Client:
                     validate_aud=False,
                     algorithms=["RS256"],
                 ),
+            )
+        except jwtoxide.InvalidSignatureError:
+            raise jwt.exceptions.InvalidSignatureError(
+                "Signature verification failed"
             )
         except Exception:
             # If something goes wrong, fallback to PyJWT
