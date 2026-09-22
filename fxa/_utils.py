@@ -10,6 +10,7 @@ etc as we go.  So don't import any of it outside of this package.
 
 """
 import os
+import threading
 import time
 import hashlib
 import hmac
@@ -170,6 +171,7 @@ class APIClient:
         self.max_retry_after = None
         # Internal state.
         self._session = session
+        self._state_lock = threading.Lock()
         self._backoff_until = 0
         self._backoff_response = None
         self._clockskew = None
@@ -243,15 +245,16 @@ class APIClient:
         """
         # Don't make requests if we're in backoff.
         # Instead just synthesize a backoff response.
-        if self._backoff_response is not None:
-            if self._backoff_until >= self.client_curtime():
-                resp = pickle.loads(self._backoff_response)
-                resp.request = None
-                resp.headers["Timestamp"] = str(int(self.server_curtime()))
-                return resp
-            else:
-                self._backoff_until = 0
-                self._backoff_response = None
+        with self._state_lock:
+            if self._backoff_response is not None:
+                if self._backoff_until >= self.client_curtime():
+                    resp = pickle.loads(self._backoff_response)
+                    resp.request = None
+                    resp.headers["Timestamp"] = str(int(self.server_curtime()))
+                    return resp
+                else:
+                    self._backoff_until = 0
+                    self._backoff_response = None
 
         # Apply defaults and perform the request.
         while url.startswith("/"):
@@ -291,8 +294,9 @@ class APIClient:
             else:
                 if self.max_retry_after is not None:
                     retry_after = max(retry_after, self.max_retry_after)
-                self._backoff_until = self.client_curtime() + retry_after
-                self._backoff_response = pickle.dumps(resp)
+                with self._state_lock:
+                    self._backoff_until = self.client_curtime() + retry_after
+                    self._backoff_response = pickle.dumps(resp)
 
         # If we get a 401 with "serverTime" field in the body, then we're
         # probably out of sync with the server's clock.  Check our skew,
@@ -308,7 +312,8 @@ class APIClient:
                 # If our guestimate is more than 30 seconds out, try again.
                 # This assumes the auth hook will use the updated clockskew.
                 if abs(server_timestamp - self.server_curtime()) > 30:
-                    self._clockskew = server_timestamp - self.client_curtime()
+                    with self._state_lock:
+                        self._clockskew = server_timestamp - self.client_curtime()
                     return self.request(method, url, json, False, **kwds)
 
         # See if we need to adjust for clock skew between client and server.
@@ -323,7 +328,8 @@ class APIClient:
                 msg = msg.format(resp.headers["timestamp"])
                 raise fxa.errors.OutOfProtocolError(msg)
             else:
-                self._clockskew = server_timestamp - self.client_curtime()
+                with self._state_lock:
+                    self._clockskew = server_timestamp - self.client_curtime()
 
         # Raise exceptions for any error responses.
         # XXX TODO: hooks for raising error subclass based on errno.
