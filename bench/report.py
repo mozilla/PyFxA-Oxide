@@ -71,15 +71,32 @@ def format_report(rows, limit):
     def us(seconds):
         return "—" if seconds is None else f"{seconds * 1e6:.2f} µs"
 
+    header = ["Benchmark", "Base median", "PR median", "Change", "Status"]
+    right = [False, True, True, True, False]  # right-align the numbers
+    cells = [
+        [f"`{name.removeprefix('test_')}`", us(b), us(p),
+         "—" if pct is None else f"{pct:+.1f}%", labels[status]]
+        for name, b, p, pct, status in rows
+    ]
+    # Pad every column (except the last, which holds emoji) so the raw
+    # Markdown lines up in a terminal or log; it still renders as a table.
+    widths = [max(len(row[i]) for row in [header] + cells) for i in range(len(header) - 1)]
+
+    def line(row):
+        padded = [
+            cell.rjust(w) if r else cell.ljust(w)
+            for cell, w, r in zip(row, widths, right)
+        ]
+        return "| " + " | ".join(padded + row[len(widths):]) + " |"
+
+    rule = ["-" * (w - 1) + ":" if r else "-" * w for w, r in zip(widths, right)] + ["---"]
     lines = [
         f"Fails if a median is more than {limit:g}% slower than the base, or a benchmark fails.",
         "",
-        "| Benchmark | Base median | PR median | Change | Status |",
-        "|---|---:|---:|---:|---|",
+        line(header),
+        "| " + " | ".join(rule) + " |",
+        *(line(row) for row in cells),
     ]
-    for name, b, p, pct, status in rows:
-        change = "—" if pct is None else f"{pct:+.1f}%"
-        lines.append(f"| `{name}` | {us(b)} | {us(p)} | {change} | {labels[status]} |")
     return "\n".join(lines)
 
 

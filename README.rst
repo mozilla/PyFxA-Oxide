@@ -13,33 +13,37 @@ Performance Comparison
 Verification benchmarks
 =======================
 
-``bench/`` times the token-verification code MLPA uses: ``verify_token``
-cache misses and hits, the jwtoxide and PyJWT decoders, and ``MemoryCache``.
-There are no network calls.
+``bench/`` has performance benchmarks for token verification. CI runs them on
+every PR and compares the results with the base branch.
 
-Run locally, with Hatch installed::
+Run locally
+-----------
 
-    make bench                      # or: hatch run bench:run
-    make bench-compare              # or: hatch run bench:compare [BASE] [OUT]
+With Hatch installed::
 
-``make bench-compare`` also takes ``BASE=origin/main``, ``THRESHOLD=10%``, and
-``OUT=.benchmarks/compare`` to keep the results. If you change the bench
-Python version in ``pyproject.toml``, run ``hatch env remove bench`` once.
+    make bench            # run the benchmarks
+    make bench-compare    # compare your working tree with main, like CI
 
-CI runs the comparison on every PR and puts a table in the job summary with
-each benchmark's base and PR median, the % change, and a status: ✅ ok,
-❌ over the threshold, ⚠️ failed, or 🆕 no baseline (new, or can't run on the
-base yet). The job fails on ❌ or ⚠️. The threshold is 20% by default; change
-it with the ``BENCH_FAIL_THRESHOLD`` repository variable. Some benchmarks fail
-on purpose if jwtoxide falls back to PyJWT.
+``make bench-compare`` options:
 
-To add a benchmark, put it in ``bench/`` with any helpers and mocks, keep
-setup out of the timed call, and get code under test through the ``require``
-fixture::
+- ``BASE=origin/main``: branch to compare against (default ``main``)
+- ``THRESHOLD=10%``: allowed slowdown (default 20%)
+- ``OUT=.benchmarks/compare``: keep the results (deleted by default)
 
-    def test_new_thing(benchmark, require):
-        Client = require("fxa.oauth", "Client", has=["new_method"])
-        ...
+If you change the bench Python version in ``pyproject.toml``, run
+``hatch env remove bench`` once.
 
-If the base branch doesn't have that code yet, the benchmark is skipped there
-("no baseline") instead of failing.
+Read the results
+----------------
+
+The table (printed locally, and in the CI job summary) shows each benchmark's
+median time on the base branch and the PR, and the % change:
+
+- ✅ **ok**: within the threshold
+- ❌ **over N%**: slower than the threshold; fails the job
+- ⚠️ **failed**: the benchmark errored on the PR; fails the job. Some fail on
+  purpose when the code takes a slower fallback path.
+- 🆕 **no baseline**: a new benchmark, or the base branch doesn't have the code
+  it uses yet; not compared
+
+In CI, set the threshold with the ``BENCH_FAIL_THRESHOLD`` repository variable.

@@ -9,6 +9,18 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+def pytest_benchmark_update_machine_info(config, machine_info):
+    """pytest-benchmark hook: drop the CPU's clock speed from machine info.
+
+    Clock speed varies from moment to moment on the same machine, so it doesn't
+    identify the machine; the fields that do (CPU model, cores, OS, Python) are
+    kept. Left in, the hz_* fields make same-machine CI runs look like different
+    machines, causing a machine-info difference warning.
+    """
+    for key in ("hz_actual", "hz_actual_friendly", "hz_advertised", "hz_advertised_friendly"):
+        machine_info.get("cpu", {}).pop(key, None)
+
+
 # Set by CI when running the PR's benchmarks against the base branch's code.
 BASELINE_RUN = os.environ.get("PYFXA_BENCH_BASELINE") == "1"
 

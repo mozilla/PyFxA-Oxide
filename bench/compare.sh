@@ -81,15 +81,20 @@ set +e
 
 # 1. Baseline: run in the worktree and save the results as run 0001.
 #    Benches that can't run here (new or renamed code) skip via the require
-#    fixture in bench/conftest.py.
+#    fixture in bench/conftest.py. --benchmark-quiet: its table would repeat
+#    the baseline rows of the PR run's comparison table.
+echo "== Baseline run: $base_ref =="
 (cd "$base" && PYFXA_BENCH_BASELINE=1 "$work/base-venv/bin/python" -m pytest bench \
-  --benchmark-only -rsfE -p no:cacheprovider \
+  --benchmark-only --benchmark-quiet -rsfE -p no:cacheprovider \
   --benchmark-storage="$storage" --benchmark-save=baseline \
   --benchmark-json="$out/baseline.json") 2>&1 | tee "$out/baseline.txt"
 base_status=${PIPESTATUS[0]}
 
 # 2. Current tree: run here, compare each median with run 0001, and fail above
-#    the threshold. A bench with no baseline is shown but not compared.
+#    the threshold. A bench with no baseline is shown but not compared. Its
+#    table lists each bench twice: (0001_baseline) and (NOW), the PR.
+echo
+echo "== PR run, compared with the baseline =="
 (cd "$repo" && "$work/pr-venv/bin/python" -m pytest bench \
   --benchmark-only -rsfE -p no:cacheprovider \
   --benchmark-storage="$storage" --benchmark-compare=0001 \
@@ -108,6 +113,7 @@ set -e
 "$work/pr-venv/bin/python" "$repo/bench/report.py" "$out" "$threshold" > "$out/report.md" ||
   echo "Could not build the % change table; see pr.txt." > "$out/report.md"
 echo
+echo "== Summary =="
 cat "$out/report.md"
 echo
 
