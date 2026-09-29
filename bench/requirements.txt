@@ -1,0 +1,5 @@
+# Benchmark tooling, installed on both sides by bench/compare.sh.
+# Keep in sync with [tool.hatch.envs.bench] in pyproject.toml.
+pytest==8.4.2
+pytest-benchmark==5.2.3
+responses==0.25.8
