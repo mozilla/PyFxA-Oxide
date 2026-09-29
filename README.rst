@@ -28,7 +28,8 @@ With Hatch installed::
 
 - ``BASE=origin/main``: branch to compare against (default ``main``)
 - ``THRESHOLD=10%``: allowed slowdown (default 20%)
-- ``OUT=.benchmarks/compare``: keep the results (deleted by default)
+- ``KEEP_RESULTS=1``: keep the results in ``.benchmarks/compare/<time>-<pid>/``,
+  a new folder per run (deleted by default). Delete old folders when done.
 
 If you change the bench Python version in ``pyproject.toml``, run
 ``hatch env remove bench`` once.

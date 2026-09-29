@@ -5,10 +5,13 @@
 #
 # Both sides run this tree's bench/ files, each in its own venv. The baseline
 # runs in a worktree of BASE_REF (default: main), because the benches import
-# `fxa` from the directory they run in. Results are kept in OUT_DIR if given,
-# otherwise deleted. Fails if a median is more than BENCH_FAIL_THRESHOLD
-# (default 20%) slower, or if a benchmark fails on the current tree.
+# `fxa` from the directory they run in. Results are deleted at the end, unless
+# KEEP_RESULTS=1 (kept in .benchmarks/compare/<time>-<pid>/) or OUT_DIR is given
+# (used by CI). Fails if a median is more than BENCH_FAIL_THRESHOLD (default
+# 20%) slower, or if either pytest run fails. Baseline skips are allowed.
 set -euo pipefail
+
+section() { printf '\n======== %s ========\n' "$1"; }  # blank line, then a heading
 
 # --- Settings ----------------------------------------------------------------
 
@@ -46,9 +49,20 @@ trap 'exit 130' INT   # Ctrl-C: exit, which runs cleanup
 trap 'exit 143' TERM
 git -C "$repo" worktree prune  # forget worktrees from runs that were killed
 
-out="${2:-$work/results}"
+keep=true
+if [ -n "${2:-}" ]; then
+  out="$2"  # CI reads the results from here after the script ends
+elif [ "${KEEP_RESULTS:-}" = "1" ]; then
+  # A new folder per run, so earlier kept runs are never overwritten.
+  out="$repo/.benchmarks/compare/$(date +%Y%m%d-%H%M%S)-$$"
+else
+  out="$work/results"
+  keep=false
+fi
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
+# A reused OUT_DIR may hold an earlier run's files; remove them so a file this
+# run fails to write can't be mistaken for its output.
 rm -rf "$out"/baseline.* "$out"/pr.* "$out/report.md"
 storage="file://$storage_dir"  # new per run, so the baseline is always run 0001
 
@@ -83,22 +97,28 @@ set +e
 #    Benches that can't run here (new or renamed code) skip via the require
 #    fixture in bench/conftest.py. --benchmark-quiet: its table would repeat
 #    the baseline rows of the PR run's comparison table.
-echo "== Baseline run: $base_ref =="
+section "Baseline run: $base_ref"
 (cd "$base" && PYFXA_BENCH_BASELINE=1 "$work/base-venv/bin/python" -m pytest bench \
   --benchmark-only --benchmark-quiet -rsfE -p no:cacheprovider \
   --benchmark-storage="$storage" --benchmark-save=baseline \
   --benchmark-json="$out/baseline.json") 2>&1 | tee "$out/baseline.txt"
 base_status=${PIPESTATUS[0]}
 
+# An all-skipped run succeeds but leaves the JSON file empty and saves no
+# baseline. pytest-benchmark rejects comparison flags without a saved run.
+# Still run the current suite after baseline errors, but keep their exit status.
+compare_args=(--benchmark-storage="$storage")
+if [ "$base_status" -eq 0 ] && [ -s "$out/baseline.json" ]; then
+  compare_args+=(--benchmark-compare=0001 --benchmark-compare-fail="median:$threshold")
+fi
+
 # 2. Current tree: run here, compare each median with run 0001, and fail above
 #    the threshold. A bench with no baseline is shown but not compared. Its
 #    table lists each bench twice: (0001_baseline) and (NOW), the PR.
-echo
-echo "== PR run, compared with the baseline =="
+section "PR run"
 (cd "$repo" && "$work/pr-venv/bin/python" -m pytest bench \
   --benchmark-only -rsfE -p no:cacheprovider \
-  --benchmark-storage="$storage" --benchmark-compare=0001 \
-  --benchmark-compare-fail="median:$threshold" \
+  "${compare_args[@]}" \
   --benchmark-columns=min,median,max,rounds \
   --benchmark-sort=name \
   --benchmark-json="$out/pr.json" --junitxml="$out/pr.xml") 2>&1 | tee "$out/pr.txt"
@@ -110,23 +130,30 @@ set -e
 
 # % change table (bench/report.py). Reporting only: a problem here must not
 # change the exit status.
-"$work/pr-venv/bin/python" "$repo/bench/report.py" "$out" "$threshold" > "$out/report.md" ||
-  echo "Could not build the % change table; see pr.txt." > "$out/report.md"
-echo
-echo "== Summary =="
+{
+  if [ "$base_status" -ne 0 ]; then
+    echo "**Baseline failed (pytest exit $base_status); this comparison fails.** See baseline.txt or the job log."
+    echo
+  fi
+  "$work/pr-venv/bin/python" "$repo/bench/report.py" "$out" "$threshold" ||
+    echo "Could not build the % change table; see pr.txt."
+} > "$out/report.md"
+section "Summary"
 cat "$out/report.md"
-echo
 
-# Baseline failures don't fail the job: those benches just have no baseline.
+# Explicit skips succeed; errors, failed tests, and collection failures do not.
 if [ "$base_status" -ne 0 ]; then
-  echo "::warning::Some benchmarks failed on the baseline; they have no baseline."
+  echo "::error::Baseline pytest run failed with exit code $base_status."
+  if [ "$status" -eq 0 ]; then
+    status=$base_status
+  fi
 fi
-if [ -n "${2:-}" ]; then
+if $keep; then
   echo "Results: $out"
 fi
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   echo "::notice::Results: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 fi
 
-# The current tree's result decides: regression or failed bench -> non-zero.
+# Fail on a regression or a failed pytest run on either side.
 exit "$status"
