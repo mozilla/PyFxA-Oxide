@@ -33,9 +33,13 @@ python="${PYTHON:-python3}"
 # under $work and is removed on exit, including after Ctrl-C.
 work="$(mktemp -d)"
 base="$work/base"
+# pytest-benchmark shows its storage path relative to the current directory
+# and crashes if it can't, so keep storage inside the checkout the PR run uses.
+storage_dir="$repo/.benchmarks/compare-$$"
 cleanup() {
   git -C "$repo" worktree remove --force "$base" 2>/dev/null || true
-  rm -rf "$work"
+  rm -rf "$work" "$storage_dir"
+  rmdir "$repo/.benchmarks" 2>/dev/null || true  # only if now empty
 }
 trap cleanup EXIT
 trap 'exit 130' INT   # Ctrl-C: exit, which runs cleanup
@@ -45,9 +49,8 @@ git -C "$repo" worktree prune  # forget worktrees from runs that were killed
 out="${2:-$work/results}"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
-# Clear old results so the baseline is always saved as run 0001.
-rm -rf "$out/storage" "$out"/baseline.* "$out"/pr.* "$out/report.md"
-storage="file://$out/storage"
+rm -rf "$out"/baseline.* "$out"/pr.* "$out/report.md"
+storage="file://$storage_dir"  # new per run, so the baseline is always run 0001
 
 # --- Baseline code, with this tree's benchmarks ------------------------------
 

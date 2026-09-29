@@ -15,45 +15,80 @@ from pathlib import Path
 
 def medians(path):
     """Map benchmark name to median seconds."""
-    if not path.exists():
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):  # missing or empty: that run didn't finish
         return {}
-    return {b["name"]: b["stats"]["median"] for b in json.loads(path.read_text())["benchmarks"]}
+    return {b["name"]: b["stats"]["median"] for b in data["benchmarks"]}
 
 
 def failed(path):
     """Names of tests that failed or errored."""
-    if not path.exists():
+    try:
+        cases = ET.parse(path).iter("testcase")
+    except (OSError, ET.ParseError):  # missing or empty: that run didn't finish
         return set()
     return {
         case.get("name")
-        for case in ET.parse(path).iter("testcase")
+        for case in cases
         if case.find("failure") is not None or case.find("error") is not None
     }
+
+
+def compare(base, pr, pr_failed, limit):
+    """One row per PR benchmark: (name, base median, PR median, % change, status).
+
+    Medians and % change are None when missing. Status is "failed", "new" (no
+    baseline), "slower" (over the limit) or "ok".
+    """
+    rows = []
+    for name in sorted(set(pr) | pr_failed):
+        b, p = base.get(name), pr.get(name)
+        pct = None
+        if name in pr_failed:
+            status = "failed"
+        elif b is None:
+            status = "new"
+        else:
+            pct = (p - b) / b * 100
+            status = "slower" if pct > limit else "ok"
+        rows.append((name, b, p, pct, status))
+    return rows
+
+
+def format_report(rows, limit):
+    """Render the rows from compare() as Markdown."""
+    if not rows:
+        return "No PR benchmark results; check the job log."
+
+    labels = {
+        "ok": "✅ ok",
+        "slower": f"❌ over {limit:g}%",
+        "failed": "⚠️ failed",
+        "new": "🆕 no baseline",
+    }
+
+    def us(seconds):
+        return "—" if seconds is None else f"{seconds * 1e6:.2f} µs"
+
+    lines = [
+        f"Fails if a median is more than {limit:g}% slower than the base, or a benchmark fails.",
+        "",
+        "| Benchmark | Base median | PR median | Change | Status |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for name, b, p, pct, status in rows:
+        change = "—" if pct is None else f"{pct:+.1f}%"
+        lines.append(f"| `{name}` | {us(b)} | {us(p)} | {change} | {labels[status]} |")
+    return "\n".join(lines)
 
 
 def main(out_dir, threshold):
     out = Path(out_dir)
     limit = float(threshold.rstrip("%"))
     base, pr = medians(out / "baseline.json"), medians(out / "pr.json")
-    pr_failed = failed(out / "pr.xml")
-
-    print(f"Fails if a median is more than {limit:g}% slower than the base, or a benchmark fails.\n")
-    print("| Benchmark | Base median | PR median | Change | Status |")
-    print("|---|---:|---:|---:|---|")
-    for name in sorted(set(pr) | pr_failed):
-        b, p = base.get(name), pr.get(name)
-        change = "—"
-        if name in pr_failed:
-            status = "⚠️ failed"
-        elif b is None:
-            status = "🆕 no baseline"
-        else:
-            pct = (p - b) / b * 100
-            change = f"{pct:+.1f}%"
-            status = f"❌ over {limit:g}%" if pct > limit else "✅ ok"
-        base_s = f"{b * 1e6:.2f} µs" if b is not None else "—"
-        pr_s = f"{p * 1e6:.2f} µs" if p is not None else "—"
-        print(f"| `{name}` | {base_s} | {pr_s} | {change} | {status} |")
+    rows = compare(base, pr, failed(out / "pr.xml"), limit)
+    print(format_report(rows, limit))
 
 
 if __name__ == "__main__":
