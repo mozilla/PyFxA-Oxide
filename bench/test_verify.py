@@ -53,6 +53,40 @@ def test_verify_mocked_jwks_cache_miss(benchmark, signed_token_and_jwk, require)
     assert_profile(result, "local")
 
 
+def test_verify_reused_client_mocked_jwks_cache_miss(benchmark, signed_token_and_jwk, require):
+    # How MLPA runs: one long-lived client. Only the per-token result cache is
+    # emptied each round, so anything the client keeps (such as a JWKS cache)
+    # carries over, as in production.
+    Client = require("fxa.oauth", "Client", has=["verify_token"])
+    MemoryCache = require("fxa.cache", "MemoryCache")
+    token, jwk = signed_token_and_jwk
+    client = Client(server_url="https://benchmark.invalid")
+
+    def empty_result_cache():
+        client.cache = MemoryCache()
+        return (client, token), {}
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
+        http.add(responses.GET, JWKS_URL, json={"keys": [jwk]}, status=200)
+        result = benchmark.pedantic(verify_once, setup=empty_result_cache, rounds=ROUNDS)
+
+    assert_profile(result, "local")
+
+
+def test_verify_second_key_cache_miss(benchmark, signed_token_and_jwk, other_jwk, require):
+    # The token matches the second of two keys, as during an FxA key rotation,
+    # so the first key is tried and rejected on every call.
+    Client = require("fxa.oauth", "Client", has=["verify_token"])
+    token, jwk = signed_token_and_jwk
+
+    def fresh_client():
+        return (Client(server_url="https://benchmark.invalid", jwks=[other_jwk, jwk]), token), {}
+
+    result = benchmark.pedantic(verify_once, setup=fresh_client, rounds=ROUNDS)
+
+    assert_profile(result, "local")
+
+
 def test_verify_cache_hit(benchmark, signed_token_and_jwk, require):
     # _verify_jwt_token is patched below as a guard.
     Client = require("fxa.oauth", "Client", has=["verify_token", "_verify_jwt_token"])

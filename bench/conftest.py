@@ -57,3 +57,10 @@ def signed_token_and_jwk():
     )
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
     return token, jwk
+
+
+@pytest.fixture(scope="session")
+def other_jwk():
+    """Public JWK of an unrelated key, e.g. the other key during a rotation."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
