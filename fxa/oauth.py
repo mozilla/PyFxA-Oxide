@@ -205,6 +205,7 @@ class Client:
         # we check it here, it fails because the right audience isn't being
         # requested.
         try:
+            raise ValueError("QA: force the PyJWT fallback")  # QA only; do not merge
             # Try to first decode with jwtoxide
             decoded = decode(
                 token,
