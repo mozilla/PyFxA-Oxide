@@ -1,0 +1,73 @@
+name: Benchmark gate experiment
+
+# Measures how noisy the benchmarks are on GitHub runners, to choose the gate's
+# threshold: runs the unchanged suite many times (A/A), then replays the runs
+# through the gate's rule (experiments/bench_roc.py) and uploads the results.
+#
+# Start it by pushing any commit to a bench-experiment/ branch, e.g.
+#   git push origin HEAD:bench-experiment/run-1
+# (workflow_dispatch works too, once this file is on the default branch).
+
+on:
+  push:
+    branches: ["bench-experiment/**"]
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Suite runs per job"
+        default: "200"
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      # Two jobs land on two runners, so results show how much noise differs
+      # between machines, not just within one.
+      matrix:
+        job: [1, 2]
+    env:
+      RUNS: ${{ inputs.runs || '200' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Hatch
+        run: pipx install hatch
+
+      - name: Record the runner
+        run: |
+          {
+            echo "## Runner (job ${{ matrix.job }})"
+            echo '```text'
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the unchanged suite ${{ env.RUNS }} times
+        run: python3 experiments/bench_threshold.py run --runs "$RUNS" --out "results/aa"
+
+      - name: Replay through the gate (false positives and detection by threshold)
+        run: python3 experiments/bench_roc.py results/aa --out results/roc.html
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Benchmark gate experiment (job ${{ matrix.job }})"
+            echo "Download the \`bench-experiment-${{ matrix.job }}\` artifact and open \`roc.html\`:"
+            echo "false positives and detection by threshold, using the gate's median of 3 runs per side."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-experiment-${{ matrix.job }}
+          path: results/
