@@ -5,10 +5,12 @@
 #
 # Both sides run this tree's bench/ files, each in its own venv. The baseline
 # runs in a worktree of BASE_REF (default: main), because the benches import
-# `fxa` from the directory they run in. Results are deleted at the end, unless
-# KEEP_RESULTS=1 (kept in .benchmarks/compare/<time>-<pid>/) or OUT_DIR is given
-# (used by CI). Fails if a median is more than BENCH_FAIL_THRESHOLD (default
-# 20%) slower, or if either pytest run fails. Baseline skips are allowed.
+# `fxa` from the directory they run in. Each side runs BENCH_RUNS times
+# (default 3), alternating base and PR, and bench/report.py compares the median
+# of each side's runs. Results are deleted at the end, unless KEEP_RESULTS=1
+# (kept in .benchmarks/compare/<time>-<pid>/) or OUT_DIR is given (used by CI).
+# Fails if a median is more than BENCH_FAIL_THRESHOLD slower, or
+# if any pytest run fails. Baseline skips are allowed.
 set -euo pipefail
 
 section() { printf '\n======== %s ========\n' "$1"; }  # blank line, then a heading
@@ -18,16 +20,23 @@ section() { printf '\n======== %s ========\n' "$1"; }  # blank line, then a head
 base_ref="${1:-main}"
 repo="$(git rev-parse --show-toplevel)"
 
-# pytest-benchmark reads a bare number as seconds and accepts only whole
-# percentages, so require an integer followed by %.
-threshold="${BENCH_FAIL_THRESHOLD:-20%}"
+# Require the % sign, so a bare number can't be mistaken for a time.
+DEFAULT_BENCH_FAIL_THRESHOLD="20%"
+threshold="${BENCH_FAIL_THRESHOLD:-$DEFAULT_BENCH_FAIL_THRESHOLD}"
 if [[ ! "$threshold" =~ ^[0-9]+%$ ]]; then
   echo "BENCH_FAIL_THRESHOLD must be a whole-number percentage such as 20%, got '$threshold'." >&2
   exit 2
 fi
 
-# Interpreter for both venvs. Under `hatch run bench:compare` this is the bench
-# env's Python, whose version is set in pyproject.toml. PYTHON overrides it.
+# Runs per side. The median of 3 ignores one unusually slow or fast run on
+# either side.
+runs="${BENCH_RUNS:-3}"
+if [[ ! "$runs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "BENCH_RUNS must be a positive whole number, got '$runs'." >&2
+  exit 2
+fi
+
+# Hatch supplies Python for both venvs; set PYTHON to override it.
 python="${PYTHON:-python3}"
 
 # --- Temp space and cleanup --------------------------------------------------
@@ -36,13 +45,9 @@ python="${PYTHON:-python3}"
 # under $work and is removed on exit, including after Ctrl-C.
 work="$(mktemp -d)"
 base="$work/base"
-# pytest-benchmark shows its storage path relative to the current directory
-# and crashes if it can't, so keep storage inside the checkout the PR run uses.
-storage_dir="$repo/.benchmarks/compare-$$"
 cleanup() {
   git -C "$repo" worktree remove --force "$base" 2>/dev/null || true
-  rm -rf "$work" "$storage_dir"
-  rmdir "$repo/.benchmarks" 2>/dev/null || true  # only if now empty
+  rm -rf "$work"
 }
 trap cleanup EXIT
 trap 'exit 130' INT   # Ctrl-C: exit, which runs cleanup
@@ -63,8 +68,7 @@ mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 # A reused OUT_DIR may hold an earlier run's files; remove them so a file this
 # run fails to write can't be mistaken for its output.
-rm -rf "$out"/baseline.* "$out"/pr.* "$out/report.md"
-storage="file://$storage_dir"  # new per run, so the baseline is always run 0001
+rm -rf "$out"/baseline-* "$out"/pr-* "$out/report.md"
 
 # --- Baseline code, with this tree's benchmarks ------------------------------
 
@@ -89,64 +93,68 @@ install "$work/pr-venv" "$repo"
 
 # --- Run the benchmarks ------------------------------------------------------
 
-# Exit codes are captured instead of stopping the script, so both runs happen
+# Exit codes are captured instead of stopping the script, so every run happens
 # and the results are always written.
 set +e
+base_status=0  # first failing baseline exit code, if any
+status=0       # first failing PR exit code, if any
 
-# 1. Baseline: run in the worktree and save the results as run 0001.
-#    Benches that can't run here (new or renamed code) skip via the require
-#    fixture in bench/conftest.py. --benchmark-quiet: its table would repeat
-#    the baseline rows of the PR run's comparison table.
-section "Baseline run: $base_ref"
-(cd "$base" && PYFXA_BENCH_BASELINE=1 "$work/base-venv/bin/python" -m pytest bench \
-  --benchmark-only --benchmark-quiet -rsfE -p no:cacheprovider \
-  --benchmark-storage="$storage" --benchmark-save=baseline \
-  --benchmark-json="$out/baseline.json") 2>&1 | tee "$out/baseline.txt"
-base_status=${PIPESTATUS[0]}
+# Alternate base and PR, so a machine that speeds up or slows down during the
+# job affects both sides alike. Benches that can't run on the base (new or
+# renamed code) skip there via the require fixture in bench/conftest.py.
+for i in $(seq 1 "$runs"); do
+  section "Baseline run $i/$runs: $base_ref"
+  (cd "$base" && PYFXA_BENCH_BASELINE=1 "$work/base-venv/bin/python" -m pytest bench \
+    --benchmark-only -rsfE -p no:cacheprovider \
+    --benchmark-columns=min,median,max,rounds --benchmark-sort=name \
+    --benchmark-json="$out/baseline-$i.json") 2>&1 | tee "$out/baseline-$i.txt"
+  run_status=${PIPESTATUS[0]}
+  if [ "$run_status" -ne 0 ] && [ "$base_status" -eq 0 ]; then
+    base_status=$run_status
+  fi
 
-# An all-skipped run succeeds but leaves the JSON file empty and saves no
-# baseline. pytest-benchmark rejects comparison flags without a saved run.
-# Still run the current suite after baseline errors, but keep their exit status.
-compare_args=(--benchmark-storage="$storage")
-if [ "$base_status" -eq 0 ] && [ -s "$out/baseline.json" ]; then
-  compare_args+=(--benchmark-compare=0001 --benchmark-compare-fail="median:$threshold")
-fi
-
-# 2. Current tree: run here, compare each median with run 0001, and fail above
-#    the threshold. A bench with no baseline is shown but not compared. Its
-#    table lists each bench twice: (0001_baseline) and (NOW), the PR.
-section "PR run"
-(cd "$repo" && "$work/pr-venv/bin/python" -m pytest bench \
-  --benchmark-only -rsfE -p no:cacheprovider \
-  "${compare_args[@]}" \
-  --benchmark-columns=min,median,max,rounds \
-  --benchmark-sort=name \
-  --benchmark-json="$out/pr.json" --junitxml="$out/pr.xml") 2>&1 | tee "$out/pr.txt"
-status=${PIPESTATUS[0]}
-
-set -e
+  section "PR run $i/$runs"
+  (cd "$repo" && "$work/pr-venv/bin/python" -m pytest bench \
+    --benchmark-only -rsfE -p no:cacheprovider \
+    --benchmark-columns=min,median,max,rounds --benchmark-sort=name \
+    --benchmark-json="$out/pr-$i.json" --junitxml="$out/pr-$i.xml") 2>&1 | tee "$out/pr-$i.txt"
+  run_status=${PIPESTATUS[0]}
+  if [ "$run_status" -ne 0 ] && [ "$status" -eq 0 ]; then
+    status=$run_status
+  fi
+done
 
 # --- Report ------------------------------------------------------------------
 
-# % change table (bench/report.py). Reporting only: a problem here must not
-# change the exit status.
+# bench/report.py compares the medians and exits non-zero on a regression.
+# If it can't produce a table, the comparison can't be trusted, so that fails
+# the job too.
+report_status=0
+"$work/pr-venv/bin/python" "$repo/bench/report.py" "$out" "$threshold" > "$work/table.md" ||
+  report_status=$?
+set -e
 {
   if [ "$base_status" -ne 0 ]; then
-    echo "**Baseline failed (pytest exit $base_status); this comparison fails.** See baseline.txt or the job log."
+    echo "**Baseline failed (pytest exit $base_status); this comparison fails.** See baseline-*.txt or the job log."
     echo
   fi
-  "$work/pr-venv/bin/python" "$repo/bench/report.py" "$out" "$threshold" ||
-    echo "Could not build the % change table; see pr.txt."
+  if [ -s "$work/table.md" ]; then
+    cat "$work/table.md"
+  else
+    echo "Could not build the % change table; see the job log."
+  fi
 } > "$out/report.md"
 section "Summary"
 cat "$out/report.md"
 
 # Explicit skips succeed; errors, failed tests, and collection failures do not.
 if [ "$base_status" -ne 0 ]; then
-  echo "::error::Baseline pytest run failed with exit code $base_status."
-  if [ "$status" -eq 0 ]; then
-    status=$base_status
-  fi
+  echo "::error::A baseline pytest run failed with exit code $base_status."
+fi
+if [ "$report_status" -ne 0 ] && [ -s "$work/table.md" ]; then
+  echo "::error::A benchmark is more than $threshold slower than the base branch."
+elif [ "$report_status" -ne 0 ]; then
+  echo "::error::bench/report.py failed with exit code $report_status."
 fi
 if $keep; then
   echo "Results: $out"
@@ -155,5 +163,10 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   echo "::notice::Results: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 fi
 
-# Fail on a regression or a failed pytest run on either side.
-exit "$status"
+# Fail on a failed PR run, a regression, or a failed baseline run.
+for code in "$status" "$report_status" "$base_status"; do
+  if [ "$code" -ne 0 ]; then
+    exit "$code"
+  fi
+done
+exit 0
