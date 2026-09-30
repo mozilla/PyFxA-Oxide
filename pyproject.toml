@@ -71,7 +71,7 @@ cov = "pytest --cov-config=pyproject.toml --cov=fxa/ --cov-report term-missing {
 
 [tool.hatch.envs.bench]
 python = "3.12"
-# Keep in sync with bench/requirements.txt.
+# bench/compare.sh installs these on both sides of the comparison too.
 dependencies = [
   "pytest==8.4.2",
   "pytest-benchmark==5.2.3",

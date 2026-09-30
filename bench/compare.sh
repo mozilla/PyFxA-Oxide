@@ -41,6 +41,20 @@ fi
 # Hatch supplies Python for both venvs; set PYTHON to override it.
 python="${PYTHON:-python3}"
 
+# Benchmark tooling (pytest, pytest-benchmark, responses): the bench env's pins
+# in this tree's pyproject.toml, installed on both sides so both use the same
+# versions. Each side's library dependencies come from its own pyproject.toml.
+read_pins='import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    print("\n".join(tomllib.load(f)["tool"]["hatch"]["envs"]["bench"]["dependencies"]))'
+if ! pins="$("$python" -c "$read_pins" "$repo/pyproject.toml")" || [ -z "$pins" ]; then
+  echo "Could not read [tool.hatch.envs.bench] dependencies from pyproject.toml" \
+    "(needs Python 3.11+; PYTHON is $python)." >&2
+  exit 2
+fi
+bench_deps=()
+while IFS= read -r pin; do bench_deps+=("$pin"); done <<< "$pins"
+
 # --- Temp space and cleanup --------------------------------------------------
 
 # Everything temporary (worktree, venvs, results unless OUT_DIR is given) lives
@@ -88,7 +102,7 @@ cp -R "$repo/bench" "$base/bench"
 install() {  # install VENV_DIR PACKAGE_DIR
   "$python" -m venv "$1"
   "$1/bin/python" -m pip install --quiet --disable-pip-version-check \
-    "$2" -r "$repo/bench/requirements.txt"
+    "$2" "${bench_deps[@]}"
 }
 install "$work/base-venv" "$base"
 install "$work/pr-venv" "$repo"
