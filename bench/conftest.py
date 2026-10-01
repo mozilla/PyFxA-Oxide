@@ -1,4 +1,4 @@
-"""Shared benchmark fixtures; setup here is never part of a timed call."""
+"""Shared benchmark fixtures."""
 
 import importlib
 import json
@@ -8,39 +8,35 @@ from pathlib import Path
 import jwt
 import pytest
 
+from bench.settings import SETTINGS
+
 # Fixed test keys keep the token inputs identical across base and PR runs.
 KEYS = json.loads((Path(__file__).parent / "keys.json").read_text())
 # Fixed claims, so the token (and its RS256 signature, which is deterministic)
 # is byte-for-byte the same in every run. exp is far enough out never to expire.
 ISSUED_AT = 1_700_000_000
 EXPIRES_AT = 4_102_444_800  # 2100-01-01
+# Set by compare.sh when running the PR's benchmarks against the base's code.
+BASELINE_RUN = os.environ.get("PYFXA_BENCH_BASELINE") == "1"
+
 
 def pytest_benchmark_update_machine_info(config, machine_info):
-    """pytest-benchmark hook: drop the CPU's clock speed from machine info.
+    """pytest-benchmark hook: drop the CPU clock speed from machine info.
 
-    Clock speed varies from moment to moment on the same machine, so it doesn't
-    identify the machine; the fields that do (CPU model, cores, OS, Python) are
-    kept. Left in, the hz_* fields make same-machine CI runs look like different
-    machines, causing a machine-info difference warning.
+    It varies from moment to moment, so left in, it makes runs on the same
+    machine look like different machines (a machine-info warning).
     """
     for key in ("hz_actual", "hz_actual_friendly", "hz_advertised", "hz_advertised_friendly"):
         machine_info.get("cpu", {}).pop(key, None)
 
 
-# Set by CI when running the PR's benchmarks against the base branch's code.
-BASELINE_RUN = os.environ.get("PYFXA_BENCH_BASELINE") == "1"
-
-
 @pytest.fixture(scope="session")
 def require():
-    """Return code under test, e.g. ``require("fxa.oauth", "Client", has=["verify_token"])``.
+    """Get code under test, e.g. ``require("fxa.oauth", "Client", has=["verify_token"])``.
 
-    ``has`` lists attributes the object must have, such as the methods a
-    benchmark times. If anything is missing:
-
-    - Baseline run (``PYFXA_BENCH_BASELINE=1``): skip the benchmark as "no
-      baseline"; the PR added or renamed that code.
-    - PR run: raise the error, so the benchmark fails.
+    If the module, name or any ``has`` attribute is missing, skip the benchmark
+    on the baseline run ("no baseline": the PR added or renamed it), and fail
+    it on the PR run.
     """
 
     def require(module_name, name, has=()):
@@ -55,12 +51,6 @@ def require():
             raise
 
     return require
-
-
-# Distinct tokens for the cache-miss benchmarks, which verify each once per
-# round: every call misses, and a slowdown or speed-up that only some calls hit
-# still shows in every round's time, so the median sees it.
-MISS_TOKENS = 10
 
 
 @pytest.fixture(scope="session")
@@ -81,7 +71,7 @@ def signed_tokens_and_jwk():
             algorithm="RS256",
             headers={"typ": "at+jwt"},
         )
-        for index in range(MISS_TOKENS)
+        for index in range(SETTINGS.MISS_TOKENS)
     )
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
     return tokens, jwk

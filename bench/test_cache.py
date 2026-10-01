@@ -1,17 +1,14 @@
-"""Measure PyFxA's process-local cache with production-sized entry counts."""
+"""Benchmark MemoryCache get, set and expiry purge with many entries."""
 
 import time
 
-ROUNDS = 50
-CACHE_SIZE = 10_000
-BATCH_SIZE = 100
-EXPIRED_ENTRIES = 1_000
+from bench.settings import SETTINGS
 
 
 def populated_cache(MemoryCache):
     cache = MemoryCache(ttl=300)
     now = time.time()
-    for index in range(CACHE_SIZE):
+    for index in range(SETTINGS.CACHE_SIZE):
         cache.set(f"key-{index}", "value", now=now)
     return cache
 
@@ -29,21 +26,21 @@ def set_batch(cache, keys):
 def test_memory_cache_get_many_live_entries(benchmark, require):
     MemoryCache = require("fxa.cache", "MemoryCache", has=["get"])
     cache = populated_cache(MemoryCache)
-    keys = tuple(f"key-{index}" for index in range(BATCH_SIZE))
-    benchmark.extra_info["operations_per_round"] = BATCH_SIZE  # report.py shows per get
-    benchmark.pedantic(get_batch, args=(cache, keys), rounds=ROUNDS, iterations=10)
+    keys = tuple(f"key-{index}" for index in range(SETTINGS.BATCH_SIZE))
+    benchmark.extra_info["operations_per_round"] = SETTINGS.BATCH_SIZE  # report.py shows per get
+    benchmark.pedantic(get_batch, args=(cache, keys), rounds=SETTINGS.ROUNDS, iterations=10)
     assert cache.get(keys[-1]) == "value"
 
 
 def test_memory_cache_set_many_live_entries(benchmark, require):
     MemoryCache = require("fxa.cache", "MemoryCache", has=["set"])
-    keys = tuple(f"new-key-{index}" for index in range(BATCH_SIZE))
+    keys = tuple(f"new-key-{index}" for index in range(SETTINGS.BATCH_SIZE))
 
     def fresh_cache():
         return (populated_cache(MemoryCache), keys), {}
 
-    benchmark.extra_info["operations_per_round"] = BATCH_SIZE  # report.py shows per set
-    benchmark.pedantic(set_batch, setup=fresh_cache, rounds=ROUNDS)
+    benchmark.extra_info["operations_per_round"] = SETTINGS.BATCH_SIZE  # report.py shows per set
+    benchmark.pedantic(set_batch, setup=fresh_cache, rounds=SETTINGS.ROUNDS)
 
 
 def test_memory_cache_purge_expired_entries(benchmark, require):
@@ -51,7 +48,7 @@ def test_memory_cache_purge_expired_entries(benchmark, require):
 
     def expired_cache():
         cache = MemoryCache(ttl=300)
-        for index in range(EXPIRED_ENTRIES):
+        for index in range(SETTINGS.EXPIRED_ENTRIES):
             cache.set(f"old-{index}", "value", now=0)
         return (cache, "absent"), {"now": 301}
 
@@ -59,5 +56,5 @@ def test_memory_cache_purge_expired_entries(benchmark, require):
     cache, key = expired_cache()[0]
     assert cache.get(key, now=301) is None
     assert not cache.expiry_queue
-    result = benchmark.pedantic(MemoryCache.get, setup=expired_cache, rounds=ROUNDS)
+    result = benchmark.pedantic(MemoryCache.get, setup=expired_cache, rounds=SETTINGS.ROUNDS)
     assert result is None

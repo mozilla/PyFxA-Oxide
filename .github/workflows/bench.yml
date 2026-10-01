@@ -25,9 +25,9 @@ jobs:
       - name: Compare benchmarks with base branch
         env:
           # Optional repository variable (Settings > Secrets and variables >
-          # Actions > Variables), e.g. 10%. Unset uses bench/compare.sh's default.
+          # Actions > Variables), e.g. 10%. Unset uses the default in bench/settings.env.
           BENCH_FAIL_THRESHOLD: ${{ vars.BENCH_FAIL_THRESHOLD }}
-          # Optional repository variable: runs per side. Unset uses the default, 5.
+          # Optional repository variable: runs per side. Unset uses bench/settings.env.
           BENCH_RUNS: ${{ vars.BENCH_RUNS }}
         run: hatch run bench:compare HEAD^1 "$RUNNER_TEMP/pyfxa-benchmarks"
 

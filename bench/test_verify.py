@@ -1,14 +1,16 @@
-"""Measure the paths that MLPA's FxA auth calls through PyFxA."""
+"""Benchmark Client.verify_token and _verify_jwt_token."""
 
 import json
 from unittest.mock import patch
 
 import responses
 
+from bench.settings import SETTINGS
+
 SCOPE = "profile:uid"
-ROUNDS = 50
 VERIFY_KWARGS = {"scope": SCOPE, "include_verification_source": True}
-JWKS_URL = "https://benchmark.invalid/v1/jwks"
+SERVER_URL = "https://benchmark.invalid"  # never resolves, so nothing reaches a network
+JWKS_URL = f"{SERVER_URL}/v1/jwks"  # Client adds /v1 to the server URL
 
 
 def verify_once(client, token):
@@ -16,10 +18,17 @@ def verify_once(client, token):
 
 
 def verify_each(client, tokens):
-    """Verify several distinct tokens: one cache miss each. Returns the last profile."""
+    """Verify each token in turn; return the last profile, for the caller to check."""
     for token in tokens:
         profile = client.verify_token(token, **VERIFY_KWARGS)
     return profile
+
+
+def fresh_client_each_round(Client, tokens, **client_kwargs):
+    """A pedantic setup that gives every round a new Client, so its cache starts empty."""
+    def setup():
+        return (Client(server_url=SERVER_URL, **client_kwargs), tokens), {}
+    return setup
 
 
 def assert_each_missed(client, tokens):
@@ -35,83 +44,74 @@ def assert_profile(profile, source):
     assert profile["verification_source"] == source
 
 
-# The four cache-miss benchmarks verify MISS_TOKENS distinct tokens per round
-# (bench/conftest.py), so their times are per MISS_TOKENS verifications. One
-# token per round hid changes that only some calls hit: the median of 50
-# one-call rounds ignores anything in fewer than half of them.
+# The cache-miss benchmarks verify MISS_TOKENS distinct tokens per round, so a
+# slowdown in only some calls still shows (see bench/README.md).
 
 
 def test_verify_supplied_jwks_cache_miss(benchmark, signed_tokens_and_jwk, require):
     Client = require("fxa.oauth", "Client", has=["verify_token"])
     tokens, jwk = signed_tokens_and_jwk
+    setup = fresh_client_each_round(Client, tokens, jwks=[jwk])
 
-    def fresh_client():
-        return (Client(server_url="https://benchmark.invalid", jwks=[jwk]), tokens), {}
-
-    benchmark.extra_info["verifications_per_round"] = len(tokens)
+    benchmark.extra_info["operations_per_round"] = len(tokens)
     # Fail rather than silently measure the PyJWT fallback.
     with patch("fxa.oauth.jwt.decode", side_effect=AssertionError("PyJWT fallback")):
-        assert_each_missed(*fresh_client()[0])
-        result = benchmark.pedantic(verify_each, setup=fresh_client, rounds=ROUNDS)
+        assert_each_missed(*setup()[0])
+        result = benchmark.pedantic(verify_each, setup=setup, rounds=SETTINGS.ROUNDS)
 
     assert_profile(result, "local")
 
 
 def test_verify_supplied_jwks_cache_miss_pyjwt_fallback(benchmark, signed_tokens_and_jwk, require):
-    # test_verify_supplied_jwks_cache_miss with jwtoxide forced to fail, so every
-    # miss uses PyJWT: the cost of a silent fallback (~2.6x a jwtoxide miss).
-    # The other benchmarks fail if a real fallback happens; this one times it.
+    # The benchmark above with jwtoxide forced to fail: times a silent PyJWT
+    # fallback (~2.6x a jwtoxide miss), which the other benchmarks fail on.
     Client = require("fxa.oauth", "Client", has=["verify_token"])
     tokens, jwk = signed_tokens_and_jwk
+    setup = fresh_client_each_round(Client, tokens, jwks=[jwk])
 
-    def fresh_client():
-        return (Client(server_url="https://benchmark.invalid", jwks=[jwk]), tokens), {}
+    benchmark.extra_info["operations_per_round"] = len(tokens)
+    with patch("fxa.oauth.decode", side_effect=ValueError("forced fallback")) as jwtoxide_decode:
+        result = benchmark.pedantic(verify_each, setup=setup, rounds=SETTINGS.ROUNDS)
 
-    benchmark.extra_info["verifications_per_round"] = len(tokens)
-    with patch("fxa.oauth.decode", side_effect=ValueError("forced fallback")) as rust:
-        result = benchmark.pedantic(verify_each, setup=fresh_client, rounds=ROUNDS)
-
-    assert rust.call_count >= ROUNDS * len(tokens)  # every miss went through the fallback
+    # Every miss tried jwtoxide, then fell back.
+    assert jwtoxide_decode.call_count >= SETTINGS.ROUNDS * len(tokens)
     assert_profile(result, "local")
 
 
 def test_verify_mocked_jwks_cache_miss(benchmark, signed_tokens_and_jwk, require):
     Client = require("fxa.oauth", "Client", has=["verify_token"])
     tokens, jwk = signed_tokens_and_jwk
+    setup = fresh_client_each_round(Client, tokens)  # no jwks: each miss fetches them
 
-    def fresh_client():
-        return (Client(server_url="https://benchmark.invalid"), tokens), {}
-
-    benchmark.extra_info["verifications_per_round"] = len(tokens)
+    benchmark.extra_info["operations_per_round"] = len(tokens)
     # Only this GET is mocked; any other request raises.
     with responses.RequestsMock() as http:
         http.add(responses.GET, JWKS_URL, json={"keys": [jwk]}, status=200)
         with patch("fxa.oauth.jwt.decode", side_effect=AssertionError("PyJWT fallback")):
-            result = benchmark.pedantic(verify_each, setup=fresh_client, rounds=ROUNDS)
+            result = benchmark.pedantic(verify_each, setup=setup, rounds=SETTINGS.ROUNDS)
         # One /jwks fetch per verification: every token missed.
-        assert len(http.calls) == ROUNDS * len(tokens)
+        assert len(http.calls) == SETTINGS.ROUNDS * len(tokens)
 
     assert_profile(result, "local")
 
 
 def test_verify_reused_client_mocked_jwks_cache_miss(benchmark, signed_tokens_and_jwk, require):
-    # How MLPA runs: one long-lived client verifying many tokens. Only the
-    # per-token result cache is emptied each round, so anything the client
-    # keeps (such as a JWKS cache) carries over, as in production.
+    # One long-lived client, as a service keeps: only its result cache is
+    # emptied each round, so anything else it keeps (e.g. a JWKS cache) carries over.
     Client = require("fxa.oauth", "Client", has=["verify_token"])
     MemoryCache = require("fxa.cache", "MemoryCache")
     tokens, jwk = signed_tokens_and_jwk
-    client = Client(server_url="https://benchmark.invalid")
+    client = Client(server_url=SERVER_URL)
 
     def empty_result_cache():
         client.cache = MemoryCache()
         return (client, tokens), {}
 
-    benchmark.extra_info["verifications_per_round"] = len(tokens)
+    benchmark.extra_info["operations_per_round"] = len(tokens)
     with responses.RequestsMock(assert_all_requests_are_fired=False) as http:
         http.add(responses.GET, JWKS_URL, json={"keys": [jwk]}, status=200)
         assert_each_missed(*empty_result_cache()[0])
-        result = benchmark.pedantic(verify_each, setup=empty_result_cache, rounds=ROUNDS)
+        result = benchmark.pedantic(verify_each, setup=empty_result_cache, rounds=SETTINGS.ROUNDS)
 
     assert_profile(result, "local")
 
@@ -121,13 +121,11 @@ def test_verify_second_key_cache_miss(benchmark, signed_tokens_and_jwk, other_jw
     # so the first key is tried and rejected on every call.
     Client = require("fxa.oauth", "Client", has=["verify_token"])
     tokens, jwk = signed_tokens_and_jwk
+    setup = fresh_client_each_round(Client, tokens, jwks=[other_jwk, jwk])
 
-    def fresh_client():
-        return (Client(server_url="https://benchmark.invalid", jwks=[other_jwk, jwk]), tokens), {}
-
-    benchmark.extra_info["verifications_per_round"] = len(tokens)
-    assert_each_missed(*fresh_client()[0])
-    result = benchmark.pedantic(verify_each, setup=fresh_client, rounds=ROUNDS)
+    benchmark.extra_info["operations_per_round"] = len(tokens)
+    assert_each_missed(*setup()[0])
+    result = benchmark.pedantic(verify_each, setup=setup, rounds=SETTINGS.ROUNDS)
 
     assert_profile(result, "local")
 
@@ -136,7 +134,7 @@ def test_verify_cache_hit(benchmark, signed_token_and_jwk, require):
     # _verify_jwt_token is patched below as a guard.
     Client = require("fxa.oauth", "Client", has=["verify_token", "_verify_jwt_token"])
     token, jwk = signed_token_and_jwk
-    client = Client(server_url="https://benchmark.invalid", jwks=[jwk])
+    client = Client(server_url=SERVER_URL, jwks=[jwk])
     verify_once(client, token)  # warm the cache
 
     with patch.object(client, "_verify_jwt_token", side_effect=AssertionError("cache miss")):
@@ -144,7 +142,7 @@ def test_verify_cache_hit(benchmark, signed_token_and_jwk, require):
             client.verify_token,
             args=(token,),
             kwargs=VERIFY_KWARGS,
-            rounds=ROUNDS,
+            rounds=SETTINGS.ROUNDS,
             iterations=100,
         )
 
@@ -154,12 +152,12 @@ def test_verify_cache_hit(benchmark, signed_token_and_jwk, require):
 def test_decode_jwtoxide(benchmark, signed_token_and_jwk, require):
     Client = require("fxa.oauth", "Client", has=["_verify_jwt_token"])
     token, jwk = signed_token_and_jwk
-    client = Client(server_url="https://benchmark.invalid", jwks=[jwk])
+    client = Client(server_url=SERVER_URL, jwks=[jwk])
     key = json.dumps(jwk)
 
     with patch("fxa.oauth.jwt.decode", side_effect=AssertionError("PyJWT fallback")):
         result = benchmark.pedantic(
-            client._verify_jwt_token, args=(key, token), rounds=ROUNDS, iterations=20
+            client._verify_jwt_token, args=(key, token), rounds=SETTINGS.ROUNDS, iterations=20
         )
 
     assert result["user"] == "benchmark-user"
@@ -168,14 +166,15 @@ def test_decode_jwtoxide(benchmark, signed_token_and_jwk, require):
 def test_decode_pyjwt_fallback(benchmark, signed_token_and_jwk, require):
     Client = require("fxa.oauth", "Client", has=["_verify_jwt_token"])
     token, jwk = signed_token_and_jwk
-    client = Client(server_url="https://benchmark.invalid", jwks=[jwk])
+    client = Client(server_url=SERVER_URL, jwks=[jwk])
     key = json.dumps(jwk)
 
     # Force the same exception route used when jwtoxide cannot decode a token.
-    with patch("fxa.oauth.decode", side_effect=ValueError("forced fallback")) as rust:
+    with patch("fxa.oauth.decode", side_effect=ValueError("forced fallback")) as jwtoxide_decode:
         result = benchmark.pedantic(
-            client._verify_jwt_token, args=(key, token), rounds=ROUNDS, iterations=20
+            client._verify_jwt_token, args=(key, token), rounds=SETTINGS.ROUNDS, iterations=20
         )
 
-    assert rust.call_count >= ROUNDS * 20  # every timed call went through the fallback
+    # Every timed call tried jwtoxide, then fell back.
+    assert jwtoxide_decode.call_count >= SETTINGS.ROUNDS * 20
     assert result["user"] == "benchmark-user"

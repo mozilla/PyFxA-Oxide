@@ -28,6 +28,9 @@ In CI, set the `BENCH_FAIL_THRESHOLD` and `BENCH_RUNS` repository variables
 (Settings → Secrets and variables → Actions → Variables) to change the same
 settings.
 
+All settings, these defaults and what the benchmarks measure (rounds, batch
+sizes, cache sizes), are in `bench/settings.env`.
+
 ## How the CI check works
 
 1. The base branch is checked out next to the PR, and **both sides run the PR's
@@ -55,8 +58,11 @@ in the job log is **not** divided for the cache-miss and cache get/set
 benchmarks: there, they show the time for the whole round, e.g. ~700 µs for 10
 verifications.
 
-Code: `compare.sh` runs both sides, `report.py` compares them and builds the
-table, and `.github/workflows/bench.yml` runs it on every PR.
+Code: `compare.sh` runs both sides and records the results, `check.py`
+decides whether the PR passes (all the rules are in one place, and its exit
+status is the job's), `report.py` turns that result into the table (if it
+fails, the job only warns), and `.github/workflows/bench.yml` runs it on
+every PR.
 
 ## What each benchmark measures
 
@@ -71,8 +77,8 @@ or 100 calls together because one is too short to time accurately; see
 |---|---|---:|---:|
 | `verify_supplied_jwks_cache_miss` | Verify a new token with the keys already given to the client | 10 | ~70 µs |
 | `verify_supplied_jwks_cache_miss_pyjwt_fallback` | The same, with the fast decoder forced to fail, so it uses the slower PyJWT | 10 | ~144 µs |
-| `verify_mocked_jwks_cache_miss` | Verify a new token, fetching the keys over (mocked) HTTP, as MLPA does | 10 | ~348 µs |
-| `verify_reused_client_mocked_jwks_cache_miss` | The same with one long-lived client, as MLPA runs it | 10 | ~344 µs |
+| `verify_mocked_jwks_cache_miss` | Verify a new token, fetching the keys over (mocked) HTTP: the default when the client isn't given `jwks` | 10 | ~348 µs |
+| `verify_reused_client_mocked_jwks_cache_miss` | The same with one long-lived client, as a long-running service keeps | 10 | ~344 µs |
 | `verify_second_key_cache_miss` | Verify a token signed by the second of two keys, as during an FxA key rotation | 10 | ~188 µs |
 | `verify_cache_hit` | Verify a token that's already in the cache (most requests) | 100 | ~4.4 µs |
 | `decode_jwtoxide` | Decode a token with jwtoxide (Rust) only | 20 | ~56 µs |
@@ -93,6 +99,10 @@ or 100 calls together because one is too short to time accurately; see
   slowdown only affects some calls, say 3 in 10, timing one call per round
   misses it, because most rounds get a normal call and the median ignores the
   rest. Timing 10 calls together puts some slow calls into every round.
+  Why 10: if 30% of calls are slow, a 10-call round misses all of them only
+  ~3% of the time (~34% with 3 calls), while a round still takes only
+  ~0.7–3.5 ms on CI. In our tests, this caught such a slowdown 100% of the time,
+  against 0.5% with 1 call per round.
 - **Many calls per round for very fast operations** (100 cache operations,
   100 cache hits, 20 decodes). A single ~0.1 µs call is too short for the
   clock to time accurately.
@@ -126,6 +136,9 @@ or 100 calls together because one is too short to time accurately; see
 
   If the base branch doesn't have that code yet, the benchmark is skipped there
   ("no baseline") instead of failing.
+- Put any size or count that defines what the benchmark measures in
+  `bench/settings.env`, add it as a field of `Settings` in
+  `bench/settings.py`, and use it as `SETTINGS.NAME`.
 - If one timed call covers several operations (a batch), set
   `benchmark.extra_info["operations_per_round"]` to the batch size, so the
   report shows time per operation.
@@ -177,7 +190,7 @@ rate probably falls in, given the limited number of runs.
 | 40% | 0.00% (0.00–0.07%) | 0.94% | 0.14% (1.06%) | 0% |
 
 5 runs per side cuts both false alarms and missed slowdowns about 4–10×, for
-about 10 seconds more per check (roughly 50 s → 60 s).
+about 10 seconds more per check (the CI job takes ~58 s with 3, ~68 s with 5).
 
 #### What the 50 rounds contribute
 

@@ -40,10 +40,10 @@ If you change the bench Python version in ``pyproject.toml``, run
 Read the results
 ----------------
 
-Each side runs 3 times, alternating base and PR. The table (printed locally,
-and in the CI job summary) shows each benchmark's median time on the base
-branch and the PR, as the median of that side's runs, and the % change. One
-unusually slow or fast run can't decide the result.
+Each side runs 5 times by default (``RUNS``), alternating base and PR. The
+table (printed locally, and in the CI job summary) shows each benchmark's
+median time on the base branch and the PR, as the median of that side's runs,
+and the % change. One unusually slow or fast run can't decide the result.
 
 - ✅ **ok**: within the threshold
 - ❌ **over N%**: slower than the threshold; fails the job

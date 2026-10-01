@@ -1,115 +1,68 @@
-"""Compare base and PR benchmark medians, print a Markdown table, and exit 1
-if any PR median is more than THRESHOLD slower.
+"""Summarize a benchmark comparison as readable Markdown: write it to
+OUT_DIR/report.md and print it.
 
-Usage: report.py OUT_DIR THRESHOLD
+Usage: report.py OUT_DIR
 
-Reads baseline-N.json and pr-N.json (pytest-benchmark --benchmark-json, one
-per run) and pr-N.xml (pytest --junitxml) from OUT_DIR. Each side's value for
-a benchmark is the median of its per-run medians, so one unusually slow or
-fast run on either side can't decide the result. Times are per operation:
-batched benchmarks set extra_info["operations_per_round"] (or
-"verifications_per_round"), and their times are divided by it.
-
-Exit status: 0 if every compared benchmark is within the threshold, 1 if any
-is slower. Failed pytest runs are judged by compare.sh from pytest's own exit
-status; they are also marked in the table.
+Reads OUT_DIR/result.json, which must give the verdict ("passed"), the
+threshold ("limit"), one row per benchmark ("rows": name, base, pr, pct,
+status), each side's run exit codes ("exit_codes"), and what fails
+("failing_rows", "failed_runs").
 """
 
 import json
-import statistics
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
-
-# extra_info keys a benchmark uses to say how many operations one timed call
-# covers. Times are divided by it, so every row shows time per operation.
-BATCH_KEYS = ("operations_per_round", "verifications_per_round")
-
-
-def per_operation(benchmark):
-    extra = benchmark.get("extra_info", {})
-    batch = next((extra[k] for k in BATCH_KEYS if k in extra), 1)
-    return benchmark["stats"]["median"] / batch
+# Status labels; "slower" includes the threshold, so label() builds it.
+LABELS = {"ok": "✅ ok", "failed": "⚠️ failed", "new": "🆕 no baseline"}
+SIDE_NAMES = {"baseline": "Baseline", "pr": "PR"}
 
 
-def run_medians(path):
-    """Map benchmark name to median seconds per operation for one run."""
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):  # missing or empty: that run didn't finish
-        return {}
-    return {b["name"]: per_operation(b) for b in data["benchmarks"]}
+def short(name):
+    """Benchmark name without the test_ prefix."""
+    return name.removeprefix("test_")
 
 
-def side_medians(out, side):
-    """Map benchmark name to the median of its per-run medians, and the run count."""
-    runs = [run_medians(p) for p in sorted(out.glob(f"{side}-*.json"))]
-    per_bench = {}
-    for run in runs:
-        for name, median in run.items():
-            per_bench.setdefault(name, []).append(median)
-    return {name: statistics.median(values) for name, values in per_bench.items()}, len(runs)
+def us(seconds):
+    return "—" if seconds is None else f"{seconds * 1e6:.2f} µs"
 
 
-def failed(out):
-    """Names of tests that failed or errored in any PR run."""
-    names = set()
-    for path in sorted(out.glob("pr-*.xml")):
-        try:
-            cases = ET.parse(path).iter("testcase")
-        except (OSError, ET.ParseError):  # missing or empty: that run didn't finish
-            continue
-        names |= {
-            case.get("name")
-            for case in cases
-            if case.find("failure") is not None or case.find("error") is not None
-        }
-    return names
+def label(status, limit):
+    return f"❌ over {limit:g}%" if status == "slower" else LABELS[status]
 
 
-def compare(base, pr, pr_failed, limit):
-    """One row per PR benchmark: (name, base median, PR median, % change, status).
-
-    Medians and % change are None when missing. Status is "failed", "new" (no
-    baseline), "slower" (over the limit) or "ok".
-    """
-    rows = []
-    for name in sorted(set(pr) | pr_failed):
-        b, p = base.get(name), pr.get(name)
-        pct = None
-        if name in pr_failed:
-            status = "failed"
-        elif b is None:
-            status = "new"
+def reasons(result):
+    """Why the check fails, one sentence each; empty if it passes."""
+    rows = {row["name"]: row for row in result["rows"]}
+    lines = []
+    for name in result["failing_rows"]:
+        row = rows[name]
+        if row["status"] == "slower":
+            lines.append(f"{short(name)} is {row['pct']:+.1f}% slower than the base")
         else:
-            pct = (p - b) / b * 100
-            status = "slower" if pct > limit else "ok"
-        rows.append((name, b, p, pct, status))
-    return rows
+            lines.append(f"{short(name)} failed in a PR run")
+    for side, side_name in SIDE_NAMES.items():
+        total = len(result["exit_codes"][side])
+        by_code = {}
+        for run, code in result["failed_runs"][side].items():
+            by_code.setdefault(code, []).append(run)
+        for code, runs in by_code.items():
+            what = "didn't record an exit code" if code is None else f"failed (pytest exit {code})"
+            plural = "s" if len(runs) > 1 else ""
+            lines.append(f"{side_name} run{plural} {', '.join(runs)} of {total} {what}")
+    if not result["rows"]:
+        lines.append("No PR benchmark results")
+    return lines
 
 
-def format_report(rows, limit, runs):
-    """Render the rows from compare() as Markdown."""
-    if not rows:
-        return "No PR benchmark results; check the job log."
-
-    labels = {
-        "ok": "✅ ok",
-        "slower": f"❌ over {limit:g}%",
-        "failed": "⚠️ failed",
-        "new": "🆕 no baseline",
-    }
-
-    def us(seconds):
-        return "—" if seconds is None else f"{seconds * 1e6:.2f} µs"
-
+def table(rows, limit):
+    """The comparison table, one row per benchmark."""
     header = ["Benchmark", "Base median", "PR median", "Change", "Status"]
     right = [False, True, True, True, False]  # right-align the numbers
     cells = [
-        [f"`{name.removeprefix('test_')}`", us(b), us(p),
-         "—" if pct is None else f"{pct:+.1f}%", labels[status]]
-        for name, b, p, pct, status in rows
+        [f"`{short(r['name'])}`", us(r["base"]), us(r["pr"]),
+         "—" if r["pct"] is None else f"{r['pct']:+.1f}%", label(r["status"], limit)]
+        for r in rows
     ]
     # Pad every column (except the last, which holds emoji) so the raw
     # Markdown lines up in a terminal or log; it still renders as a table.
@@ -123,27 +76,36 @@ def format_report(rows, limit, runs):
         return "| " + " | ".join(padded + row[len(widths):]) + " |"
 
     rule = ["-" * (w - 1) + ":" if r else "-" * w for w, r in zip(widths, right)] + ["---"]
-    base_runs, pr_runs = runs
-    lines = [
-        f"Fails if a median is more than {limit:g}% slower than the base, or a benchmark fails.",
+    return [line(header), "| " + " | ".join(rule) + " |", *(line(row) for row in cells)]
+
+
+def render(result):
+    """The verdict, the reasons it fails (if any), and the table."""
+    lines = ["**✅ Passed**" if result["passed"] else "**❌ Failed**", ""]
+    why = reasons(result)
+    if why:
+        lines += [f"- {reason}" for reason in why] + [""]
+    base_runs, pr_runs = (len(result["exit_codes"][side]) for side in SIDE_NAMES)
+    lines += [
+        f"Fails if a median is more than {result['limit']:g}% slower than the base, "
+        "or a benchmark or run fails.",
         f"Each median is the median of {base_runs} base and {pr_runs} PR runs, run alternately.",
         "Times are per operation: benchmarks that time a batch are divided by the batch size.",
         "",
-        line(header),
-        "| " + " | ".join(rule) + " |",
-        *(line(row) for row in cells),
     ]
+    if result["rows"]:
+        lines += table(result["rows"], result["limit"])
+    else:
+        lines.append("No PR benchmark results; check the job log.")
     return "\n".join(lines)
 
 
-def main(out_dir, threshold):
+def main(out_dir):
     out = Path(out_dir)
-    limit = float(threshold.rstrip("%"))
-    (base, base_runs), (pr, pr_runs) = side_medians(out, "baseline"), side_medians(out, "pr")
-    rows = compare(base, pr, failed(out), limit)
-    print(format_report(rows, limit, (base_runs, pr_runs)))
-    return 1 if any(status == "slower" for *_, status in rows) else 0
+    text = render(json.loads((out / "result.json").read_text()))
+    (out / "report.md").write_text(text + "\n")
+    print(text)
 
 
 if __name__ == "__main__":
-    sys.exit(main(*sys.argv[1:]))
+    main(*sys.argv[1:])

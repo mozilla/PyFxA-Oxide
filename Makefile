@@ -1,14 +1,14 @@
 .PHONY: bench bench-compare
 
 BASE ?= main
-# Allowed median slowdown, e.g. make bench-compare THRESHOLD=10%. Empty uses
-# bench/compare.sh's default; BENCH_FAIL_THRESHOLD in the environment also works.
+# Allowed median slowdown, e.g. make bench-compare THRESHOLD=10%. Empty uses the
+# default in bench/settings.env; BENCH_FAIL_THRESHOLD in the environment also works.
 THRESHOLD ?= $(BENCH_FAIL_THRESHOLD)
 # KEEP_RESULTS=1 keeps each run's results in .benchmarks/compare/<time>-<pid>/.
 # Empty deletes them.
 KEEP_RESULTS ?=
-# Runs per side, e.g. make bench-compare RUNS=3. Empty uses bench/compare.sh's
-# default (5); BENCH_RUNS in the environment also works.
+# Runs per side, e.g. make bench-compare RUNS=3. Empty uses the default in
+# bench/settings.env; BENCH_RUNS in the environment also works.
 RUNS ?= $(BENCH_RUNS)
 
 bench:
