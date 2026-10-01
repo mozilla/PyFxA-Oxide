@@ -90,9 +90,14 @@ def side_medians(runs):
     return {name: statistics.median(values) for name, values in per_bench.items()}
 
 
+def slower_ratio(limit):
+    """The check's rule as a ratio: a PR/base ratio above this is too slow."""
+    return 1 + limit / 100
+
+
 def is_slower(base, pr, limit):
-    """The check's rule: is the PR more than limit % slower than the base?"""
-    return (pr - base) / base * 100 > limit
+    """Is the PR more than limit % slower than the base?"""
+    return pr / base > slower_ratio(limit)
 
 
 def failed_benchmarks(out):
