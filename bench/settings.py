@@ -12,6 +12,7 @@ for _line in Path(__file__).with_name("settings.env").read_text().splitlines():
 
 @dataclass(frozen=True)
 class Settings:
+    BENCH_RUNS: int  # default runs per side (compare.sh reads it from the file too)
     ROUNDS: int
     MISS_TOKENS: int
     CACHE_SIZE: int
