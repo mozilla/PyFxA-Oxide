@@ -3,7 +3,7 @@ name: Benchmark threshold experiment
 # Measures how noisy the benchmarks are on GitHub runners, to choose the
 # check's threshold: runs the unchanged suite many times, replays the runs
 # through the check's rule (bench/experiments/replay.py) and uploads the
-# results. See bench/README.md.
+# results. See bench/experiments/README.md.
 #
 # Start it by pushing any commit to a bench-experiment/ branch, e.g.
 #   git push origin HEAD:bench-experiment/run-1

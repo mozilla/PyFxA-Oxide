@@ -7,9 +7,9 @@ description: Run the PyFxA-Oxide benchmark threshold experiment (hundreds of run
 
 Measures how often the benchmark check in `bench/compare.sh` would fail
 unchanged code (false alarms) and how reliably it catches real slowdowns, at
-thresholds from 0% to 50%. Background and how to read the results:
-`bench/README.md` ("Choosing the threshold" and "Running the experiments
-yourself").
+thresholds from 0% to 50%. Background and the current results:
+`bench/README.md` ("Choosing the threshold"). How to run the experiments
+and read the results: `bench/experiments/README.md`.
 
 Tools: `bench/experiments/collect_runs.py` (collect runs),
 `bench/experiments/replay.py` (replay and report),
