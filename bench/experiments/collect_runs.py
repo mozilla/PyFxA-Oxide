@@ -45,6 +45,8 @@ def run_suite(python, checkout, out, number, pytest_args):
     )
     status = "ok" if result.returncode == 0 else f"exit {result.returncode}"
     print(f"  {out.name}/run-{number:03d}  {time.time() - started:5.1f}s  {status}", flush=True)
+    # Keep going after a failed run: replay.py treats a missing benchmark as a
+    # failure, and the log says why.
     if result.returncode != 0:
         (out / f"run-{number:03d}.log").write_text(result.stdout + result.stderr)
 
@@ -64,7 +66,8 @@ def ab(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(required=True)
     a = sub.add_parser("aa", help="run this tree's code RUNS times")
     a.add_argument("out")
@@ -77,7 +80,8 @@ def main():
     b.add_argument("--runs", type=int, default=60)
     b.set_defaults(func=ab)
     for p in (a, b):
-        p.add_argument("--pytest-args", default="", help='extra pytest options, e.g. "--benchmark-disable-gc"')
+        p.add_argument("--pytest-args", default="",
+                       help='extra pytest options, e.g. "--benchmark-disable-gc"')
     args = parser.parse_args()
     args.func(args)
 
