@@ -20,16 +20,6 @@ EXPIRES_AT = 4_102_444_800  # 2100-01-01
 BASELINE_RUN = os.environ.get("PYFXA_BENCH_BASELINE") == "1"
 
 
-def pytest_benchmark_update_machine_info(config, machine_info):
-    """pytest-benchmark hook: drop the CPU clock speed from machine info.
-
-    It varies from moment to moment, so left in, it makes runs on the same
-    machine look like different machines (a machine-info warning).
-    """
-    for key in ("hz_actual", "hz_actual_friendly", "hz_advertised", "hz_advertised_friendly"):
-        machine_info.get("cpu", {}).pop(key, None)
-
-
 @pytest.fixture(scope="session")
 def require():
     """Get code under test, e.g. ``require("fxa.oauth", "Client", has=["verify_token"])``.
