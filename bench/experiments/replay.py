@@ -13,6 +13,11 @@ changed-code runs (collect_runs.py ab) to check that simulation. Uses the
 check's own rule and medians (bench/check.py). Writes a self-contained HTML
 report (default AA_DIR/roc.html, from roc_template.html), plus roc.csv and
 summary.md, and prints the summary.
+
+It also says whether the results support the configured check: the threshold
+and runs per side from BENCH_FAIL_THRESHOLD and BENCH_RUNS in the environment
+(as CI's repository variables set them), else bench/settings.env. With
+--enforce, it exits 1 if they don't.
 """
 
 import argparse
@@ -20,6 +25,7 @@ import bisect
 import csv
 import glob
 import json
+import os
 import random
 import statistics
 import sys
@@ -36,7 +42,15 @@ SLOWDOWNS = [10, 20, 30, 50, 100]      # simulated true slowdowns, %
 HEADLINE = [10, 20, 30, 40]            # thresholds for the summary table
 BAND = (0.05, 0.95)                    # bootstrap percentiles shown as the uncertainty band
 MIN_BOOTSTRAP_SAMPLES = 2000           # replays per bootstrap resample, at least
+# The configured check is supported if, at its threshold T:
+MAX_FALSE_ALARMS = 0.1                 # % of unchanged-code checks failing (band's upper end)
+MIN_CAUGHT = 99.0                      # % of T+10% slowdowns caught, by every benchmark
 TEMPLATE = Path(__file__).with_name("roc_template.html")
+
+
+def configured(name):
+    """A check setting as CI uses it: the environment if set, else bench/settings.env."""
+    return int((os.environ.get(name) or str(getattr(SETTINGS, name))).removesuffix("%"))
 
 
 def load_runs(directory):
@@ -181,6 +195,29 @@ def injected_results(label, directory, names, aa, runs_per_side, samples, rng):
             "suite": {t: v / samples * 100 for t, v in suite.items()}, "rows": rows}
 
 
+def problems(result, names, fp_band, threshold):
+    """Why the results don't support the check at threshold; empty if they do."""
+    i = THRESHOLDS.index(threshold)
+    found = []
+    if fp_band[1][i] > MAX_FALSE_ALARMS:
+        found.append(f"false alarms could be up to {fp_band[1][i]:.2f}% of checks "
+                     f"(allowed: {MAX_FALSE_ALARMS:g}%)")
+    caught = {n: result.detect(n, threshold + 10, threshold) for n in names}
+    for name in sorted(n for n in names if caught[n] < MIN_CAUGHT):
+        found.append(f"{name.removeprefix('test_')} catches only {caught[name]:.1f}% of "
+                     f"+{threshold + 10}% slowdowns (needed: {MIN_CAUGHT:g}%)")
+    return found
+
+
+def verdict_markdown(found, threshold, runs_per_side):
+    """One line saying whether the results support the check, then any problems."""
+    check_name = f"the check ({threshold}% threshold, {runs_per_side} runs per side)"
+    if not found:
+        return f"**✅ These results support {check_name}.**"
+    return "\n".join([f"**❌ These results don't support {check_name}:**", ""]
+                     + [f"- {problem}" for problem in found])
+
+
 def summary_markdown(summary, run_count, bench_count, runs_per_side):
     """The headline thresholds as a Markdown table."""
     lines = [
@@ -226,9 +263,18 @@ def parse_args():
                         help="random groups of runs to replay (half that per --injected)")
     parser.add_argument("--bootstrap", type=int, default=60)
     parser.add_argument("--seed", type=int, default=11)
-    parser.add_argument("--runs-per-side", type=int, default=SETTINGS.BENCH_RUNS,
-                        help="runs per side (default: BENCH_RUNS in bench/settings.env)")
-    return parser.parse_args()
+    parser.add_argument("--runs-per-side", type=int, default=configured("BENCH_RUNS"),
+                        help="runs per side (default: the configured BENCH_RUNS)")
+    parser.add_argument("--threshold", type=int, default=configured("BENCH_FAIL_THRESHOLD"),
+                        metavar="PCT",
+                        help="the check's threshold, %% (default: the configured "
+                             "BENCH_FAIL_THRESHOLD)")
+    parser.add_argument("--enforce", action="store_true",
+                        help="exit 1 if the results don't support the check")
+    args = parser.parse_args()
+    if args.threshold not in THRESHOLDS:
+        parser.error(f"the threshold must be a whole number from 0 to 50, got {args.threshold}")
+    return args
 
 
 def main():
@@ -265,11 +311,14 @@ def main():
         "summary": summary, "injected": injected, "source": str(args.aa_dir),
         "runs_per_side": args.runs_per_side,
     })
-    text = summary_markdown(summary, len(runs), len(names), args.runs_per_side)
+    found = problems(result, names, fp_band, args.threshold)
+    text = (summary_markdown(summary, len(runs), len(names), args.runs_per_side) + "\n\n"
+            + verdict_markdown(found, args.threshold, args.runs_per_side))
     out.with_name("summary.md").write_text(text + "\n")
     print(text)
     print(f"\nwrote {out}, {out.with_suffix('.csv')} and {out.with_name('summary.md')}")
+    return 1 if args.enforce and found else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
