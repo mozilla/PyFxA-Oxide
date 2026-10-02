@@ -50,6 +50,11 @@ The table in the job summary shows each benchmark's result:
 - 🆕 **no baseline**: the benchmark is new, or the base branch doesn't have the
   code it uses yet, so it isn't compared
 
+Above the table, ⚠️ **noisy** warns that a benchmark's runs on one side
+differ by more than `BENCH_NOISE_WARN` (15%), ignoring the fastest and slowest
+run. Its result is less reliable, but the job doesn't fail. If a new benchmark
+gets this warning, see [`experiments/README.md`](experiments/README.md).
+
 Times in the table are **per operation**, e.g. one token verification or one
 cache lookup, so rows can be compared with each other. Some benchmarks time a
 batch of operations together (see below); the table divides those by the
