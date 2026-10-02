@@ -13,11 +13,44 @@ are in [`bench/README.md`](../README.md#choosing-the-threshold-the-experiments).
 
 Run the commands below from the repository root.
 
+## When to rerun the experiment
+
+The experiment should be rerun when any of the following apply:
+
+- A new benchmark is much noisier than the others. For example, it's
+  timing-sensitive: threads, real I/O, or a single operation of under ~1 µs
+  that isn't batched.
+- What the benchmarks measure changes: `ROUNDS`, `BATCH_SIZE`, `MISS_TOKENS`,
+  etc. in `bench/settings.env`.
+- The check itself changes: a lower threshold, fewer runs per side, or a new
+  rule.
+- The CI runners change, or the suite gets a lot bigger (i.e. twice as many
+  benchmarks).
+
+CI covers most of these automatically:
+
+- **PRs that change the check or what it measures** run the experiment:
+  changes to `bench/settings.env`, `bench/check.py`, `bench/compare.sh`,
+  `.github/workflows/bench.yml` or the experiment itself.
+- **A monthly run** (on the 1st) catches changes to GitHub's runners.
+- **Noisy benchmarks:** the PR check warns when a benchmark's runs differ by
+  more than `BENCH_NOISE_WARN` (15%), ignoring the fastest and slowest run. If
+  a new benchmark gets this warning, make it steadier (batch it, or give it
+  more rounds) or rerun the experiment.
+
+Each experiment job fails if its results don't support the configured check
+(the threshold and runs per side in `bench/settings.env`, or the repository
+variables): at the threshold, false alarms must stay at or below 0.1% of
+checks (the band's upper end), and every benchmark must catch at least 99% of
+slowdowns 10 points above the threshold. These limits are `MAX_FALSE_ALARMS`
+and `MIN_CAUGHT` in `replay.py`. A suite that gets a lot bigger without
+changing any of those files is not covered; rerun the experiment by hand.
+
 ## On GitHub CI (recommended)
 
 The results that matter are from CI's machines. `bench-experiment.yml` runs
 200 runs on each of two runners (about 10 minutes) and uploads the results.
-Start it from your computer:
+Besides the automatic runs above, you can start it from your computer:
 
 ```bash
 # Push your current commit to a bench-experiment/ branch; this starts the job

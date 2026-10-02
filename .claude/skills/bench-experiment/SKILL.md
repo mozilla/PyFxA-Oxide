@@ -45,6 +45,10 @@ git ls-files .github/workflows/bench-experiment.yml bench/experiments/
 
 ## 3a. Run on GitHub CI
 
+The workflow also runs by itself on PRs that change the check or what it
+measures, and monthly. If the user wants those results, find the run with
+`gh run list --workflow bench-experiment.yml` and skip to the download step.
+
 Pushing to the shared remote is visible to others and starts CI. **Show the
 user the exact command and get a clear yes before running it.**
 
@@ -95,7 +99,8 @@ Don't run other heavy work (including other benchmarks) while it runs.
 ## 4. Analyse
 
 Each job folder has `summary.md`, `roc.html` (charts), `roc.csv` and the raw
-runs in `aa/`. Read `summary.md` for each job, and re-run the replay for any
+runs in `aa/`. Read `summary.md` for each job (it ends with whether the
+results support the configured check), and re-run the replay for any
 other settings the user wants to compare, e.g. 3 runs per side:
 
 ```bash
