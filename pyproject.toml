@@ -69,6 +69,18 @@ dependencies = [
 test = "pytest {args:fxa/tests}"
 cov = "pytest --cov-config=pyproject.toml --cov=fxa/ --cov-report term-missing {args:fxa/tests}"
 
+[tool.hatch.envs.bench]
+python = "3.12"
+# bench/compare.sh installs these on both sides of the comparison too.
+dependencies = [
+  "pytest==8.4.2",
+  "pytest-benchmark==5.2.3",
+  "responses==0.25.8",
+]
+[tool.hatch.envs.bench.scripts]
+run = "pytest bench --benchmark-only -p no:cacheprovider {args}"
+compare = "bash bench/compare.sh {args}"
+
 [[tool.hatch.envs.test.matrix]]
 # Note: When changing these, also update the .github/workflows/test.yml file.
 python = ["3.9", "3.10", "3.11", "3.12"]
