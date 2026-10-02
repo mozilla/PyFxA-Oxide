@@ -1,4 +1,7 @@
-"""The benchmark sizes from bench/settings.env: `from bench.settings import SETTINGS`."""
+"""Settings from bench/settings.env: `from bench.settings import SETTINGS`.
+
+Percentages such as 20% are read as whole numbers (20).
+"""
 
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -12,6 +15,10 @@ for _line in Path(__file__).with_name("settings.env").read_text().splitlines():
 
 @dataclass(frozen=True)
 class Settings:
+    # The check's defaults (compare.sh reads them from the file too).
+    BENCH_FAIL_THRESHOLD: int  # %
+    BENCH_RUNS: int
+    # What the benchmarks measure.
     ROUNDS: int
     MISS_TOKENS: int
     CACHE_SIZE: int
@@ -19,4 +26,4 @@ class Settings:
     EXPIRED_ENTRIES: int
 
 
-SETTINGS = Settings(**{f.name: int(_values[f.name]) for f in fields(Settings)})
+SETTINGS = Settings(**{f.name: int(_values[f.name].removesuffix("%")) for f in fields(Settings)})

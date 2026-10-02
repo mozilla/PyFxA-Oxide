@@ -6,7 +6,8 @@ Usage: report.py OUT_DIR
 Reads OUT_DIR/result.json, which must give the verdict ("passed"), the
 threshold ("limit"), one row per benchmark ("rows": name, base, pr, pct,
 status), each side's run exit codes ("exit_codes"), and what fails
-("failing_rows", "failed_runs").
+("failing_rows", "failed_runs"). Optionally, benchmarks whose runs differ a lot
+("noisy": name -> side -> spread %) and the warning level ("noise_limit").
 """
 
 import json
@@ -55,6 +56,18 @@ def reasons(result):
     return lines
 
 
+def noise_notes(result):
+    """One warning per noisy benchmark; empty if there are none."""
+    lines = []
+    for name, sides in result.get("noisy", {}).items():
+        where = " and ".join(f"{SIDE_NAMES[side]} runs differ by {value:.1f}%"
+                             for side, value in sides.items())
+        lines.append(f"⚠️ `{short(name)}` is noisy: its {where} (warning above "
+                     f"{result['noise_limit']:g}%), so its result is less reliable. "
+                     "See bench/experiments/README.md.")
+    return lines
+
+
 def table(rows, limit):
     """The comparison table, one row per benchmark."""
     header = ["Benchmark", "Base median", "PR median", "Change", "Status"]
@@ -85,6 +98,9 @@ def render(result):
     why = reasons(result)
     if why:
         lines += [f"- {reason}" for reason in why] + [""]
+    noise = noise_notes(result)
+    if noise:
+        lines += [f"- {note}" for note in noise] + [""]
     base_runs, pr_runs = (len(result["exit_codes"][side]) for side in SIDE_NAMES)
     lines += [
         f"Fails if a median is more than {result['limit']:g}% slower than the base, "
