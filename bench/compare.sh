@@ -43,6 +43,13 @@ if [[ ! "$runs" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
+# The check warns (but doesn't fail) when a benchmark's runs differ by more than this.
+noise_warn="$BENCH_NOISE_WARN"
+if [[ ! "$noise_warn" =~ ^[0-9]+%$ ]]; then
+  echo "BENCH_NOISE_WARN in bench/settings.env must be a percentage such as 15%, got '$noise_warn'." >&2
+  exit 2
+fi
+
 # Hatch supplies Python for both venvs; set PYTHON to override it.
 python="${PYTHON:-python3}"
 
@@ -141,7 +148,7 @@ done
 
 # check.py's exit status is the result; if it crashes, there's no verdict, so fail.
 section "Check"
-"$work/pr-venv/bin/python" "$repo/bench/check.py" "$out" "$threshold"
+"$work/pr-venv/bin/python" "$repo/bench/check.py" "$out" "$threshold" "$noise_warn"
 status=$?
 if [ ! -s "$out/result.json" ] && [ "$status" -eq 0 ]; then
   status=1
