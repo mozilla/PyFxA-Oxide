@@ -6,6 +6,8 @@ import json
 import os
 import base64
 import hashlib
+import threading
+import time
 from urllib.parse import urlparse, urlunparse, urlencode, parse_qs
 
 import jwt
@@ -18,13 +20,15 @@ from fxa._utils import APIClient, scope_matches, get_hmac, HawkTokenAuth
 DEFAULT_SERVER_URL = PRODUCTION_URLS['oauth']
 VERSION_SUFFIXES = ("/v1",)
 TOKEN_HMAC_SECRET = 'PyFxA Token Cache Hmac Secret'
+DEFAULT_JWKS_CACHE_TTL = 600
 
 
 class Client:
     """Client for talking to the Firefox Accounts OAuth server"""
 
     def __init__(self, client_id=None, client_secret=None, server_url=None,
-                 cache=True, ttl=DEFAULT_CACHE_EXPIRY, jwks=None):
+                 cache=True, ttl=DEFAULT_CACHE_EXPIRY, jwks=None,
+                 jwks_cache_ttl=DEFAULT_JWKS_CACHE_TTL):
         self.client_id = client_id
         self.client_secret = client_secret
         if server_url is None:
@@ -46,6 +50,29 @@ class Client:
             for key in jwks:
                 jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
         self.jwks = jwks
+        self.jwks_cache_ttl = jwks_cache_ttl
+        self._fetched_jwks = None
+        self._fetched_jwks_at = 0
+        self._jwks_fetch_lock = threading.Lock()
+
+    def _get_jwks(self, force_refresh=False):
+        if self.jwks is not None:
+            return self.jwks
+        if not force_refresh:
+            now = time.time()
+            if (self._fetched_jwks is not None
+                    and now - self._fetched_jwks_at < self.jwks_cache_ttl):
+                return self._fetched_jwks
+        with self._jwks_fetch_lock:
+            if not force_refresh:
+                now = time.time()
+                if (self._fetched_jwks is not None
+                        and now - self._fetched_jwks_at < self.jwks_cache_ttl):
+                    return self._fetched_jwks
+            fetched = self.apiclient.get('/jwks').get('keys', [])
+            self._fetched_jwks = fetched
+            self._fetched_jwks_at = time.time()
+            return fetched
 
     @property
     def server_url(self):
@@ -238,6 +265,17 @@ class Client:
             'profile_changed_at': decoded.get('fxa-profileChangedAt')
         }
 
+    def _try_keys(self, keys, token):
+        for k in keys:
+            try:
+                return self._verify_jwt_token(json.dumps(k), token)
+            except jwt.exceptions.InvalidSignatureError:
+                # It's only worth trying other keys in the event of
+                # `InvalidSignature`; if it was invalid for other reasons
+                # (e.g. it's expired) then using a different key won't help.
+                continue
+        return None
+
     def verify_token(self, token, scope=None, include_verification_source=False):
         """Verify an OAuth token, and retrieve user id and scopes.
 
@@ -267,28 +305,23 @@ class Client:
             # change.
             # https://github.com/mozilla/PyFxA/issues/81 is an issue about
             # getting the jwks url out of the openid-configuration.
-            keys = []
-            if self.jwks is not None:
-                keys.extend(self.jwks)
-            else:
-                keys.extend(self.apiclient.get('/jwks').get('keys', []))
+            keys = self._get_jwks()
             resp = None
             try:
-                for k in keys:
-                    try:
-                        resp = self._verify_jwt_token(json.dumps(k), token)
+                resp = self._try_keys(keys, token)
+                if resp is not None:
+                    verification_source = 'local'
+                elif len(keys) > 0:
+                    # It's a well-formed JWT, but not signed by any of the
+                    # advertized keys. Our cached JWKS may be stale (e.g. a
+                    # key rotation just happened), so refetch once before
+                    # surfacing this as an error.
+                    fresh_keys = self._get_jwks(force_refresh=True)
+                    if fresh_keys != keys:
+                        resp = self._try_keys(fresh_keys, token)
+                    if resp is not None:
                         verification_source = 'local'
-                        break
-                    except jwt.exceptions.InvalidSignatureError:
-                        # It's only worth trying other keys in the event of
-                        # `InvalidSignature`; if it was invalid for other reasons
-                        # (e.g. it's expired) then using a different key won't
-                        # help.
-                        continue
-                else:
-                    # It's a well-formed JWT, but not signed by any of the advertized keys.
-                    # We can immediately surface this as an error.
-                    if len(keys) > 0:
+                    else:
                         raise TrustError({"error": "invalid signature"})
             except (jwt.exceptions.DecodeError, jwt.exceptions.InvalidKeyError):
                 # It wasn't a JWT at all, or it was signed using a key type we
