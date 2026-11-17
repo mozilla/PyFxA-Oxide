@@ -16,13 +16,12 @@ license = "MPL-2.0"
 authors = [
   { name = "Mozilla Services", email = "services-dev@mozilla.org" },
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -83,7 +82,7 @@ compare = "bash bench/compare.sh {args}"
 
 [[tool.hatch.envs.test.matrix]]
 # Note: When changing these, also update the .github/workflows/test.yml file.
-python = ["3.9", "3.10", "3.11", "3.12"]
+python = ["3.10", "3.11", "3.12"]
 
 [tool.flake8]
 max-line-length = 99
