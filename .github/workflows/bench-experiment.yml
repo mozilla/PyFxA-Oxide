@@ -1,0 +1,95 @@
+name: Benchmark threshold experiment
+
+# Measures how noisy the benchmarks are on GitHub runners, to choose the
+# check's threshold: runs the unchanged suite many times, replays the runs
+# through the check's rule (bench/experiments/replay.py) and uploads the
+# results. Each job fails if the results don't support the configured check
+# (threshold and runs per side). See bench/experiments/README.md.
+#
+# It runs on PRs that change the check or what the benchmarks measure, and
+# monthly, to catch changes to GitHub's runners. To start it by hand, push any
+# commit to a bench-experiment/ branch, e.g.
+#   git push origin HEAD:bench-experiment/run-1
+# (workflow_dispatch works too, once this file is on the default branch).
+
+on:
+  push:
+    branches: ["bench-experiment/**"]
+  pull_request:
+    paths:
+      - "bench/settings.env"
+      - "bench/check.py"
+      - "bench/compare.sh"
+      - ".github/workflows/bench.yml"
+      - "bench/experiments/**"
+      - ".github/workflows/bench-experiment.yml"
+  schedule:
+    - cron: "0 6 1 * *"   # 06:00 UTC on the 1st of each month
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Suite runs per job"
+        default: "200"
+
+permissions:
+  contents: read
+
+# A new push to the same PR or branch replaces a run still in progress.
+concurrency:
+  group: bench-experiment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      # Two jobs land on two runners, so results show how much noise differs
+      # between machines, not just within one.
+      matrix:
+        job: [1, 2]
+    env:
+      RUNS: ${{ inputs.runs || '200' }}
+      # The check to judge, as bench.yml configures it (unset: bench/settings.env).
+      BENCH_FAIL_THRESHOLD: ${{ vars.BENCH_FAIL_THRESHOLD }}
+      BENCH_RUNS: ${{ vars.BENCH_RUNS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Hatch
+        run: pipx install hatch
+
+      - name: Record the runner
+        run: |
+          {
+            echo "## Runner (job ${{ matrix.job }})"
+            echo '```text'
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run the unchanged suite ${{ env.RUNS }} times
+        run: python3 bench/experiments/collect_runs.py aa results/aa --runs "$RUNS"
+
+      - name: Replay through the check (false alarms and detection by threshold)
+        run: python3 bench/experiments/replay.py results/aa --out results/roc.html --enforce
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Benchmark threshold experiment (job ${{ matrix.job }})"
+            if [ -f results/summary.md ]; then cat results/summary.md; echo; fi
+            echo "Charts: download the \`bench-experiment-${{ matrix.job }}\` artifact and open \`roc.html\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-experiment-${{ matrix.job }}
+          path: results/

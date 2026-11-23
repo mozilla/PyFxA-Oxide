@@ -1,0 +1,25 @@
+{
+  "_comment": "Test-only RSA keys for bench/. Fixed so the base and PR runs time identical inputs. Not used anywhere else.",
+  "signing_key": {
+    "kty": "RSA",
+    "key_ops": [
+      "sign"
+    ],
+    "n": "pr1HI-cRSXmppQIP2yfC-XIBMYVwmKXg_fzLdibXh2BDWw4F-SbQ1BJQaqYeE3QjZ2REPG2k-0NLxX1LToUH6MOVziFKY7X5Bin1kahFExqzvIpxoQ733Z88TQ243DUX6BU7WNiEKiadgPfpd5uFcK7RqPMnhfLKQkfe_Cs38ihKlFuSM0q2mMMFvCqnoo1YFIhVBSl6KT9yC2FRd7AA5-JxnMncqxJPzUo82h0aJ8u22wysla6GvZ2fAerNTWnhS1IA1YJEw7prSeTj10lD1OGImkJHpWw0xmuIXB-pK2Qhgiaj5K5NoMky4JS0i9V8VNmB_b-KNzX5mFIL6yzARQ",
+    "e": "AQAB",
+    "d": "YjxrU4GjcNLkoirpPTgS2Sarx3OGnzsm21q5mYeLTUeq1he-perwlmqzKBzYGrx6L_03U68AeZirw8D32jTki47RLwML2_hrC0BTZG0PeHXHx-bd7msOF5Dzk9GrXAxVCWzgsQIHoHgQiFi1JTysANjVETBJ-Q5igiAKjZ7YTD0uXCyt45FHDyuIVllX2ShAPNBB2Za1pC3EwW2XKl9uFpftb81Q7aEt9s-u1y9Vj2rMIBZGngmiRJjVwpmXSTK5d4el8pAYjSQjXFER5NBB_7zSKlEFgVc48xdT4Tlm4e9WXjcBLVxGut-cNzhyrSw_0zMc-vHVKyP7a5qkrOiV",
+    "p": "1IWf45l7Zz1Ou0sXpqokflNSM_XCJVv7-VH7E-1TVGsE6dtqYJZoS0B5Vrv0TLXeS7so59vig4jTME8XqqHboWU9W6iVZZxdwW5WLgCZJIEjBr0Tz_jyVUiTtn266hh7TdvqnPvxlY3PQl9BjoB9yDxcM_kHTnTvriKZF5bhHBs",
+    "q": "yNnjneMSkjHpyTMnXQYvRG_oEP9tD45CGNBXdbfuOlM1lIMMzzhtX7qosGnKPt9cybrodGYkgbzq5FEVP4_k7qqJZh_cLsd_WQfXmM-ExZGbf-2G3CnUPyYriSdulKJcgOTJIjCNJkXxs4RKhshEp4xkY_F2_SuI52TrbSASmx8",
+    "dp": "WOXEahpLqnXUtzfEHu1Q8p675gxJOANwNWx7kGxXzRovJfuoVdrUqZXAq-1XVbdF03vosoQiDk9vt-d9yNyH2M1Wiz7Lr4NnHIChAAE0DjcOhcUVwosqI06Gq3GQfFfdTEZPr3ccKSj2p5bc_1T0SIwnLX5f9guoLrk-PMXaSD0",
+    "dq": "FGIgenZ__Pw5yKR7WzJ0e5KLz6XMcKa0SIZkSdsXvy2Qo3jFRQZp-ywbUIP79XN_nC1ux9lR3STKBc_Aw0mcJyiBdy7GjqzKXMOx-p0c0VwcltgJNrC8DIiYJHwu-cCceKw_SUv6FydEBz7mvVT3urVBvu7Tb5AKfck9Jz75BGs",
+    "qi": "XjJhoYwiw14YoiGvsM06tGMyw3DpmPTu8McytcFMPeYW9Ki4AtskPjF49DD_SV9W15tm2EXe4dE3ebEempARsVbUgZ9waHwMD6rX8Qj3s-Ri3YsI_pdNktjvd5Q9BXdwfSOFeURUMh6kS7dAj2B6CxQ5RMIaJ2AQXMIIIJJVYBs"
+  },
+  "other_key": {
+    "kty": "RSA",
+    "key_ops": [
+      "verify"
+    ],
+    "n": "yuKfpVl0a9C9jnFjxGw1HIpRkTLuNoxrnJN4qa0333NDz6Z10dd6uy1lLgKiAsLaLIxlOWUkdKq6b4Yc6EyWWY5lA0KXozMWbLgDytAjtTgRtV9vMuuM0s-cuXZJ0g4QO53ROdmRB0diF5sj2FuS1yynr1_mUU63DrQQMnfQfZUyd_6a6GWquhdhuz5cgmCFw13iYRzgEiD-HGCh5DIu2KugwQFLeI3xlsP1wpPlTxYycaCiNzf12PenTguu14WayzyGEcq3Nh4f5rOxC2qU3EGuks4a_HGVfBHJNxphxiJVUvUew8vTatc9-GqyYC9SL93Iwt1kP1zNGEJY-Gx81Q",
+    "e": "AQAB"
+  }
+}

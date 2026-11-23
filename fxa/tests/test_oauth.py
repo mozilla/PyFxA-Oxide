@@ -721,6 +721,47 @@ class TestJwtToken(unittest.TestCase):
                                  should not have resulted in a call to /verify, but it did.")
 
     @responses.activate
+    def test_jwks_fetched_once_across_many_distinct_tokens(self):
+        private_key = self.get_file_contents("private-key.json")
+        for i in range(20):
+            token = self._make_jwt({
+                "sub": f"user-{i}",
+                "scope": "qwer",
+                "client_id": "foo"
+            }, private_key)
+            self.client.verify_token(token)
+        jwks_calls = [c for c in responses.calls if c.request.url == 'https://server/v1/jwks']
+        self.assertEqual(len(jwks_calls), 1)
+
+    @responses.activate
+    def test_jwks_self_heals_after_stale_cache_miss(self):
+        private_key = self.get_file_contents("private-key.json")
+        token1 = self._make_jwt({
+            "sub": "asdf",
+            "scope": "qwer",
+            "client_id": "foo"
+        }, private_key)
+        self.client.verify_token(token1)
+
+        bad_key = self.get_file_contents("bad-key.json")
+        rotated_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(bad_key.public_key()))
+        rotated_jwk["kid"] = "rotated"
+        responses.replace(responses.GET, 'https://server/v1/jwks',
+                          json={"keys": [rotated_jwk]})
+
+        token2 = self._make_jwt({
+            "sub": "asdf2",
+            "scope": "qwer",
+            "client_id": "foo"
+        }, bad_key)
+        profile = self.client.verify_token(token2)
+        self.assertEqual(profile["user"], "asdf2")
+        for c in responses.calls:
+            if c.request.url == 'https://server/v1/verify':
+                raise Exception("verifying a token signed with a rotated key \
+                                 should not have resulted in a call to /verify, but it did.")
+
+    @responses.activate
     def test_expired_jwt_token(self):
         private_key = self.get_file_contents("private-key.json")
         token = self._make_jwt({"qwer": "asdf", "exp": 0}, private_key)

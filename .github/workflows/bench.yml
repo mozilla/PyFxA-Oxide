@@ -1,0 +1,47 @@
+name: PyFxA verification benchmarks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      # The default pull_request ref is refs/pull/N/merge: the PR merged into
+      # the current base branch tip. Its first parent is that tip, so the only
+      # difference between the two sides is the PR itself.
+      - name: Check out PR merged into base
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # Hatch creates the bench env with the Python set in pyproject.toml.
+      - name: Install Hatch
+        run: pipx install hatch
+
+      - name: Compare benchmarks with base branch
+        env:
+          # Optional repository variable (Settings > Secrets and variables >
+          # Actions > Variables), e.g. 10%. Unset uses the default in bench/settings.env.
+          BENCH_FAIL_THRESHOLD: ${{ vars.BENCH_FAIL_THRESHOLD }}
+          # Optional repository variable: runs per side. Unset uses bench/settings.env.
+          BENCH_RUNS: ${{ vars.BENCH_RUNS }}
+        run: hatch run bench:compare HEAD^1 "$RUNNER_TEMP/pyfxa-benchmarks"
+
+      - name: Write benchmark comparison to job summary
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/pyfxa-benchmarks"
+          {
+            echo '## PyFxA-Oxide benchmarks: base vs PR'
+            if [ -f "$out/report.md" ]; then
+              cat "$out/report.md"
+              echo
+              echo 'Full pytest-benchmark output is in the job log.'
+            else
+              echo 'Benchmark comparison unavailable; check the job log.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
